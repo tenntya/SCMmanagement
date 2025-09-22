@@ -1,4 +1,4 @@
-(() => {
+﻿(() => {
   const state = {
     tab: 'houchozan',
     datasets: {},
@@ -16,7 +16,7 @@
   function init() {
     qsa('.tab').forEach(b => b.addEventListener('click', () => setActiveTab(b.dataset.tab)));
     qs('#refreshBtn')?.addEventListener('click', () => loadData(state.tab));
-    // 本番/サンプル切替
+    // 譛ｬ逡ｪ/繧ｵ繝ｳ繝励Ν蛻・崛
     const prodTgl = qs('#prodToggle');
     if (prodTgl) {
       prodTgl.addEventListener('change', () => loadData(state.tab));
@@ -24,13 +24,11 @@
     qs('#prevPage')?.addEventListener('click', () => { if (state.page>1){ state.page--; renderTable(); }});
     qs('#nextPage')?.addEventListener('click', () => { const max = Math.max(1, Math.ceil(state.filtered.length/state.pageSize)); if (state.page<max){ state.page++; renderTable(); }});
     qsa('input[name="logic"]').forEach(el => el.addEventListener('change', () => { applyFilters(); renderTable(); }));
-    // Filter inputs（列テキスト・区分・日付）
-    qsa('input[type="text"][data-col], select[data-col], input[type="date"][data-col]').forEach(el => {
+    // Filter inputs・亥・繝・く繧ｹ繝医・蛹ｺ蛻・・譌･莉假ｼ・    qsa('input[type="text"][data-col], select[data-col], input[type="date"][data-col]').forEach(el => {
       el.addEventListener('input', () => { applyFilters(); renderTable(); });
       el.addEventListener('change', () => { applyFilters(); renderTable(); });
     });
-    // 名称セレクト（各タブ）
-    const nameSelects = [
+    // 蜷咲ｧｰ繧ｻ繝ｬ繧ｯ繝茨ｼ亥推繧ｿ繝厄ｼ・    const nameSelects = [
       { id: '#hzNameSelect', tab: 'houchozan' },
       { id: '#tiNameSelect', tab: 'text_items' },
       { id: '#shortNameSelect', tab: 'short' },
@@ -47,14 +45,13 @@
     });
     setActiveTab('houchozan');
 
-    // 動的に再日程計画確認タブとフィルターを追加（HTMLが未対応でも動くように）
-    try {
+    // 蜍慕噪縺ｫ蜀肴律遞玖ｨ育判遒ｺ隱阪ち繝悶→繝輔ぅ繝ｫ繧ｿ繝ｼ繧定ｿｽ蜉・・TML縺梧悴蟇ｾ蠢懊〒繧ょ虚縺上ｈ縺・↓・・    try {
       const tabsSeg = qs('.tabs-segmented');
       if (tabsSeg && !qs('button.tab[data-tab="reschedule"]', tabsSeg)) {
         const btn = document.createElement('button');
         btn.className = 'tab';
         btn.dataset.tab = 'reschedule';
-        btn.textContent = '再日程計画確認';
+        btn.textContent = '蜀肴律遞玖ｨ育判遒ｺ隱・;
         btn.addEventListener('click', () => setActiveTab('reschedule'));
         tabsSeg.appendChild(btn);
       }
@@ -64,19 +61,19 @@
         sec.className = 'filters card filter-card hidden';
         sec.id = 'filters-card-reschedule';
         sec.innerHTML = `
-          <div class="card-title"><span class="dot dot-accent"></span> 再日程計画確認 フィルター</div>
+          <div class="card-title"><span class="dot dot-accent"></span> 蜀肴律遞玖ｨ育判遒ｺ隱・繝輔ぅ繝ｫ繧ｿ繝ｼ</div>
           <div class="filters-row names-row">
-            <label class="field wide"><span>名称</span>
+            <label class="field wide"><span>蜷咲ｧｰ</span>
               <div class="hz-name">
                 <select id="rsNameSelect"></select>
               </div>
             </label>
           </div>
           <div class="filters-row" id="filters-reschedule">
-            <label class="field sm"><span>A列</span><input type="text" data-col="A" placeholder="部分一致" /></label>
-            <label class="field sm"><span>C列</span><input type="text" data-col="C" placeholder="部分一致" /></label>
-            <label class="field sm"><span>分類</span>
-              <select data-col="分類"><option value="">(すべて)</option><option value="TRP">TRP</option><option value="SVF">SVF</option></select>
+            <label class="field sm"><span>A蛻・/span><input type="text" data-col="A" placeholder="驛ｨ蛻・ｸ閾ｴ" /></label>
+            <label class="field sm"><span>C蛻・/span><input type="text" data-col="C" placeholder="驛ｨ蛻・ｸ閾ｴ" /></label>
+            <label class="field sm"><span>蛻・｡・/span>
+              <select data-col="蛻・｡・><option value="">(縺吶∋縺ｦ)</option><option value="TRP">TRP</option><option value="SVF">SVF</option></select>
             </label>
           </div>`;
         anchor?.parentNode?.insertBefore(sec, anchor.nextSibling);
@@ -101,7 +98,7 @@
 
   async function loadData(tab) {
     try {
-      const prod = qs('#prodToggle')?.checked !== false; // 既定: 本番
+      const prod = qs('#prodToggle')?.checked !== false; // 譌｢螳・ 譛ｬ逡ｪ
       const sample = prod ? 0 : 1;
       const res = await fetch(`/api/data/${tab}?sample=${sample}`);
       const data = await res.json();
@@ -114,12 +111,12 @@
       renderDates();
       renderNameOptions(tab);
     } catch (e) {
-      renderError('データ取得エラー: ' + (e?.message || 'unknown'));
+      renderError('繝・・繧ｿ蜿門ｾ励お繝ｩ繝ｼ: ' + (e?.message || 'unknown'));
     }
   }
 
   function renderError(msg) {
-    qs('#table-container').innerHTML = `<div style="padding:16px;color:#b91c1c;background:#fee2e2;border:1px solid #fecaca;border-radius:8px">エラー: ${msg}</div>`;
+    qs('#table-container').innerHTML = `<div style="padding:16px;color:#b91c1c;background:#fee2e2;border:1px solid #fecaca;border-radius:8px">繧ｨ繝ｩ繝ｼ: ${msg}</div>`;
   }
 
   function buildFilterPredicates(ds) {
@@ -130,9 +127,9 @@
       const col = el.dataset.col;
       const val = (el.value || '').trim();
       if (!val) return;
-      if (col === '区分') {
+      if (col === '蛹ｺ蛻・) {
         preds.push((r, headers) => {
-          const idx = headers.indexOf('区分');
+          const idx = headers.indexOf('蛹ｺ蛻・);
           return idx >= 0 && String(r[idx] || '').includes(val);
         });
         return;
@@ -142,7 +139,7 @@
         if (idx >= 0) preds.push((r) => String(r[idx] || '').includes(val));
       }
     });
-    // P列の日時範囲
+    // P蛻励・譌･譎らｯ・峇
     const from = qs('input[data-col="P"][data-date="from"]', frow)?.value;
     const to = qs('input[data-col="P"][data-date="to"]', frow)?.value;
     if (from || to) {
@@ -158,8 +155,7 @@
         return true;
       });
     }
-    // 名称テキストフィルタ（任意）
-    const nameVal = state.nameFilter[state.tab] || '';
+    // 蜷咲ｧｰ繝・く繧ｹ繝医ヵ繧｣繝ｫ繧ｿ・井ｻｻ諢擾ｼ・    const nameVal = state.nameFilter[state.tab] || '';
     const nameLetter = (state.datasets[state.tab] || {}).nameLetter || 'C';
     if (nameVal) {
       const idx2 = letters.indexOf(nameLetter);
@@ -186,8 +182,7 @@
     if (state.sort.index >= 0) sortBy(state.sort.index, state.sort.dir);
   }
 
-  // 新しいフィルタ構築（分類など非A-Z列にも対応）
-  function buildFilterPredicates2(ds) {
+  // 譁ｰ縺励＞繝輔ぅ繝ｫ繧ｿ讒狗ｯ会ｼ亥・鬘槭↑縺ｩ髱暸-Z蛻励↓繧ょｯｾ蠢懶ｼ・  function buildFilterPredicates2(ds) {
     const frow = qs(`#filters-${state.tab}`);
     const preds = [];
     const letters = (ds && ds.letters) ? ds.letters : [];
@@ -196,8 +191,7 @@
       const val = (el.value || '').trim();
       if (!val) return;
       if (col === '__kind__') {
-        // 品目コードはD列（なければC→B→Aの順でフォールバック）
-        let codeIdx = letters.indexOf('D');
+        // 蜩∫岼繧ｳ繝ｼ繝峨・D蛻暦ｼ医↑縺代ｌ縺ｰC竊達竊但縺ｮ鬆・〒繝輔か繝ｼ繝ｫ繝舌ャ繧ｯ・・        let codeIdx = letters.indexOf('D');
         if (codeIdx < 0) codeIdx = letters.indexOf('C');
         if (codeIdx < 0) codeIdx = letters.indexOf('B');
         if (codeIdx < 0) codeIdx = letters.indexOf('A');
@@ -218,7 +212,7 @@
         return idx >= 0 && String(r[idx] || '').includes(val);
       });
     });
-    // 期日(P)の範囲
+    // 譛滓律(P)縺ｮ遽・峇
     const from = qs('input[data-col="P"][data-date="from"]', frow)?.value;
     const to = qs('input[data-col="P"][data-date="to"]', frow)?.value;
     if (from || to) {
@@ -234,7 +228,7 @@
         return true;
       });
     }
-    // 名称テキストフィルタ
+    // 蜷咲ｧｰ繝・く繧ｹ繝医ヵ繧｣繝ｫ繧ｿ
     const nameVal = state.nameFilter[state.tab] || '';
     const nameLetter = (state.datasets[state.tab] || {}).nameLetter || 'C';
     if (nameVal) {
@@ -249,8 +243,8 @@
     if (!t) return -1;
     let idx = headers.indexOf(t);
     if (idx >= 0) return idx;
-    // 分類/区分の同義や文字化けに弱く一致
-    const candidates = ['分類','区分'];
+    // 蛻・｡・蛹ｺ蛻・・蜷檎ｾｩ繧・枚蟄怜喧縺代↓蠑ｱ縺丈ｸ閾ｴ
+    const candidates = ['蛻・｡・,'蛹ｺ蛻・];
     for (const c of candidates) {
       idx = headers.indexOf(c);
       if (idx >= 0) return idx;
@@ -261,9 +255,9 @@
 
   function classifyKind(code) {
     const t = String(code || '').trim();
-    if (!t) return 'テキスト品';
-    if (t.startsWith('W-')) return '消耗品';
-    return '通常';
+    if (!t) return '繝・く繧ｹ繝亥刀';
+    if (t.startsWith('W-')) return '豸郁怜刀';
+    return '騾壼ｸｸ';
   }
 
   function renderTable() {
@@ -283,7 +277,7 @@
     const colgroup = finalWidths.map(w => `<col style="width:${w}px">`).join('');
     cont.innerHTML = `<table><colgroup>${colgroup}</colgroup><thead><tr>${ths}</tr></thead><tbody>${rowsHtml}</tbody></table>`;
     qsa('th.sortable', cont).forEach(th => th.addEventListener('click', () => { const idx = Number(th.dataset.idx); const dir = state.sort.index === idx ? -state.sort.dir : 1; sortBy(idx, dir); renderTable(); }));
-    qs('#pageInfo').textContent = `${state.page} / ${Math.max(1, Math.ceil(state.filtered.length / state.pageSize))} (${state.filtered.length}件)`;
+    qs('#pageInfo').textContent = `${state.page} / ${Math.max(1, Math.ceil(state.filtered.length / state.pageSize))} (${state.filtered.length}莉ｶ)`;
     cont.querySelectorAll('input.edit-cell')?.forEach(input => input.addEventListener('change', onEditChange));
   }
 
@@ -318,17 +312,17 @@
   }
 
   function minWidthFor(header, idx, spec) {
-    if (header === '自由入力' || header === '備考') return 240;
-    if (header === '区分') return 90;
-    if (header && header.includes('日数')) return 90;
+    if (header === '閾ｪ逕ｱ蜈･蜉・ || header === '蛯呵・) return 240;
+    if (header === '蛹ｺ蛻・) return 90;
+    if (header && header.includes('譌･謨ｰ')) return 90;
     if (spec && spec.ints && spec.ints.has(idx)) return 90;
     if (spec && spec.dates && spec.dates.has(idx)) return 120;
     return 110;
   }
 
   function cellHtml(i, header, val, row, spec) {
-    const editTargets = { houchozan: '自由入力', text_items: '自由入力', short: '備考' };
-    const canEdit = header === editTargets[state.tab];
+    const isLastCol = i === ((state.datasets[state.tab]?.headers || []).length - 1);
+    const canEdit = isLastCol;
     if (canEdit) {
       const esc = (String(val || '')).replaceAll('&', '&amp;').replaceAll('<', '&lt;');
       return `<td><input class="edit-cell" type="text" value="${esc}" data-col="${header}" data-idx="${i}" /></td>`;
@@ -344,7 +338,9 @@
     if (!ds) return;
     const idx = Number(input.dataset.idx);
     const header = input.dataset.col;
-    const keyIdx = (ds.letters || []).indexOf(ds.keyLetter || '');
+    // rescheduleはD列で紐付け
+    const keyLetter = (state.tab === 'reschedule') ? 'D' : (ds.keyLetter || '');
+    const keyIdx = (ds.letters || []).indexOf(keyLetter);
     const row = state.filtered[(state.page - 1) * state.pageSize + Array.from(input.closest('tr').parentNode.children).indexOf(input.closest('tr'))];
     const key = keyIdx >= 0 ? String(row[keyIdx] || '') : '';
     fetch('/api/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tab: state.tab, key, field: header, value: input.value || '' }) }).catch(()=>{});
@@ -360,7 +356,7 @@
     const headers = ds.headers || [];
     const dates = new Set();
     const ints = new Set();
-    headers.forEach((h, i) => { if (h?.includes('日') || h?.match(/期|Date/i)) dates.add(i); });
+    headers.forEach((h, i) => { if (h?.includes('譌･') || h?.match(/譛毫Date/i)) dates.add(i); });
     return { dates, ints };
   }
 
@@ -372,7 +368,7 @@
   function parseDateGuess(s) {
     const t = String(s||'').trim();
     if (!t) return null;
-    const a = t.replace(/年|\//g,'-').replace(/月/g,'-').replace(/日/g,'');
+    const a = t.replace(/蟷ｴ|\//g,'-').replace(/譛・g,'-').replace(/譌･/g,'');
     const d = new Date(a);
     return isNaN(d.getTime()) ? null : d;
   }
@@ -391,7 +387,7 @@
     return String(sx).localeCompare(String(sy), 'ja');
   }
 
-  // Robust date parser supporting YYYYMMDD, YYYY/MM/DD, YYYY-MM-DD, YYYY年M月D日
+  // Robust date parser supporting YYYYMMDD, YYYY/MM/DD, YYYY-MM-DD, YYYY蟷ｴM譛・譌･
   function parseDateGuess2(s) {
     const t = String(s||'').trim();
     if (!t) return null;
@@ -430,7 +426,7 @@
     const idx = letters.indexOf(nameLetter);
     if (idx < 0) { sel.innerHTML = ''; return; }
     const uniq = new Set((ds.rows || []).map(r => String(r[idx]||'')));
-    const options = ['<option value="">(すべて)</option>'].concat(Array.from(uniq).filter(Boolean).slice(0,2000).map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`));
+    const options = ['<option value="">(縺吶∋縺ｦ)</option>'].concat(Array.from(uniq).filter(Boolean).slice(0,2000).map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`));
     sel.innerHTML = options.join('');
     const cur = state.nameFilter[tab] || '';
     sel.value = cur;
@@ -449,3 +445,4 @@
 
   document.addEventListener('DOMContentLoaded', init);
 })();
+

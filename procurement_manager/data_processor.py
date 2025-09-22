@@ -637,6 +637,25 @@ def load_tab_data(tab: str, use_sample: bool = True, ref_date: Optional[date] = 
         else:
             return {"error": "unknown tab"}
 
+        # reschedule: ensure 自由入力 is bound by D列 key
+        if tab == "reschedule":
+            try:
+                d_idx = letters.index("D") if isinstance(letters, list) else -1
+                inputs_map = load_user_inputs().get("reschedule", {})
+                free = []
+                for _, row in view_df.iterrows():
+                    key = str(row.iloc[d_idx]) if d_idx >= 0 and d_idx < len(row) else ""
+                    free.append(inputs_map.get(key, {}).get("自由入力", ""))
+                view_df = view_df.copy()
+                if "自由入力" in view_df.columns:
+                    view_df["自由入力"] = free
+                else:
+                    view_df["自由入力"] = free
+                    # letters extended to match new column
+                    letters = letters + [None] if isinstance(letters, list) else letters
+            except Exception:
+                pass
+
         rows = view_df.astype(str).fillna("").values.tolist()
         result = {
             "headers": headers,

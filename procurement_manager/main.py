@@ -119,7 +119,7 @@ def create_app() -> Flask:
         key = str(payload.get("key"))
         field = payload.get("field")
         value = payload.get("value", "")
-        if tab not in ("houchozan", "text_items", "short"):
+        if tab not in ("houchozan", "text_items", "short", "reschedule"):
             return jsonify({"ok": False, "error": "unknown tab"}), 400
         if not key or not field:
             return jsonify({"ok": False, "error": "key/field required"}), 400
