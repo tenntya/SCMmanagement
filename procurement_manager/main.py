@@ -73,6 +73,29 @@ def create_app() -> Flask:
     @app.get("/api/data/<tab>")
     def api_data(tab: str):
         use_sample = request.args.get("sample", "0") != "0"
+        # Special handling for reschedule to support older dp versions
+        if tab == "reschedule":
+            try:
+                from datetime import date as _date
+                today = _date.today()
+                p = dp.resolve_if130_path(today, use_sample)
+                if not p:
+                    return jsonify({"error": "IF130データが見つかりません"})
+                df = dp.read_if126(p)
+                headers, letters, view_df, key_letter = dp.build_reschedule(df, today)
+                rows = view_df.astype(str).fillna("").values.tolist()
+                src_dt = dp.extract_date_from_filename(p) or today
+                return jsonify({
+                    "headers": headers,
+                    "letters": letters,
+                    "rows": rows,
+                    "keyLetter": key_letter,
+                    "sourceDates": [src_dt.strftime("%Y/%m/%d")],
+                    "nameLetter": "C" if "C" in letters else (letters[0] if letters else "A"),
+                })
+            except Exception as e:
+                app.logger.exception("reschedule endpoint error: %s", e)
+                return jsonify({"error": str(e)})
         data = dp.load_tab_data(tab, use_sample=use_sample)
         # 本番指定でエラー時はサンプルへ自動フォールバック
         if (not use_sample) and isinstance(data, dict) and data.get("error"):
@@ -112,7 +135,7 @@ def create_app() -> Flask:
         key = str(payload.get("key"))
         field = payload.get("field")
         value = payload.get("value", "")
-        if tab not in ("houchozan", "text_items", "short"):
+        if tab not in ("houchozan", "text_items", "short", "reschedule"):
             return jsonify({"ok": False, "error": "unknown tab"}), 400
         if not key or not field:
             return jsonify({"ok": False, "error": "key/field required"}), 400

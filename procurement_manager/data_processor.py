@@ -274,6 +274,68 @@ def read_short(paths: List[Path]) -> pd.DataFrame:
     df = df.drop_duplicates()
     return df
 
+# ---------- IF130 (再日程計画確認) ----------
+def resolve_if130_path(d: date, use_sample: bool) -> Optional[Path]:
+    if use_sample:
+        patterns = getattr(config, "SAMPLE_IF130_PATTERNS", ["NHSAPOTHIF130_*.txt"])
+        p = find_latest_by_patterns(getattr(config, "SAMPLE_SEARCH_DIRS", [config.ROOT_DIR, config.ROOT_DIR.parent]), patterns)
+        if p and p.exists():
+            logger.info("IF130 sample resolved: %s", p)
+            return p
+    try_dates: List[date] = [d]
+    if d.weekday() == 0:
+        try_dates.append(d - timedelta(days=2))
+    tmpl = os.getenv("PM_IF130_TEMPLATE", getattr(config, "IF130_TEMPLATE", r"K:\\PW_Tableau\\IF130_MRP警告リスト\\NHSAPOTHIF130_{yyyymmdd}.txt"))
+    for dd in try_dates:
+        target = _to_unc_if_possible(Path(str(tmpl).format(yyyymmdd=yyyymmdd(dd))))
+        if target.exists():
+            logger.info("IF130 path resolved: %s", target)
+            return target
+    dir_path = _to_unc_if_possible(Path(str(tmpl))).parent
+    pat = Path(str(tmpl)).name.replace("{yyyymmdd}", "*")
+    search_dirs: List[Path] = []
+    if dir_path.exists():
+        search_dirs.append(dir_path)
+    if130_dir = os.getenv("PM_IF130_DIR")
+    if if130_dir:
+        p_env = Path(if130_dir)
+        if p_env.exists():
+            search_dirs.append(p_env)
+    if os.getenv("PM_ALLOW_LOCAL_FALLBACK", "").lower() in ("1","true","yes"):
+        search_dirs.extend([config.ROOT_DIR, config.ROOT_DIR.parent])
+    latest = find_latest_by_filename_date(search_dirs, [pat]) if search_dirs else None
+    if latest and latest.exists():
+        logger.warning("IF130 fallback to latest file: %s", latest)
+        return latest
+    return None
+
+def build_reschedule(df_if130: pd.DataFrame, today: date) -> Tuple[List[str], List[str], pd.DataFrame, str]:
+    max_idx = min(17, len(df_if130.columns))
+    view_df = df_if130.iloc[:, :max_idx].copy()
+    q_idx = col_letter_to_index("Q")
+    if q_idx < len(view_df.columns):
+        view_df = view_df[view_df.iloc[:, q_idx].astype(str).str.contains("前倒し", na=False)]
+    def _classify_a(x: str) -> str:
+        if not isinstance(x, str) or not x:
+            return ""
+        c = x[0].upper()
+        if c == "H": return "TRP"
+        if c == "W": return "SVF"
+        return ""
+    view_df = view_df.copy()
+    view_df["分類"] = view_df.iloc[:, 0].astype(str).apply(_classify_a)
+    key_letter = "D"
+    d_idx = col_letter_to_index("D")
+    inputs = load_user_inputs().get("reschedule", {})
+    free = []
+    for _, row in view_df.iterrows():
+        key = str(row.iloc[d_idx]) if d_idx < len(row) else ""
+        free.append(inputs.get(key, {}).get("自由入力", ""))
+    view_df["自由入力"] = free
+    headers = list(view_df.columns)
+    letters = [index_to_col_letter(i) for i in range(len(headers))]
+    return headers, letters, view_df.reset_index(drop=True), key_letter
+
 
 # ---------- 永続化（自由入力/備考） ----------
 
