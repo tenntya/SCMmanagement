@@ -132,6 +132,50 @@ def find_latest_by_filename_date(search_dirs: List[Path], patterns: List[str]) -
     return best[2] if best else None
 
 
+def resolve_if130_path(d: date, use_sample: bool) -> Optional[Path]:
+    if use_sample:
+        patterns = getattr(config, "SAMPLE_IF130_PATTERNS", ["NHSAPOTHIF130_*.txt"])
+        p = find_latest_by_patterns(getattr(config, "SAMPLE_SEARCH_DIRS", [config.ROOT_DIR, config.ROOT_DIR.parent]), patterns)
+        if p and p.exists():
+            logger.info("IF130 sample resolved: %s", p)
+            return p
+    try_dates: List[date] = [d]
+    if d.weekday() == 0:
+        try_dates.append(d - timedelta(days=2))
+
+    tmpl = os.getenv("PM_IF130_TEMPLATE") or getattr(config, "IF130_TEMPLATE", r"K:\\PW_Tableau\\IF130_MRP警告リスト\\NHSAPOTHIF130_{yyyymmdd}.txt")
+    for dd in try_dates:
+        target = _to_unc_if_possible(Path(str(tmpl).format(yyyymmdd=yyyymmdd(dd))))
+        if target.exists():
+            logger.info("IF130 path resolved: %s", target)
+            return target
+
+    dir_path = _to_unc_if_possible(Path(str(tmpl))).parent
+    pat = Path(str(tmpl)).name.replace("{yyyymmdd}", "*")
+    search_dirs: List[Path] = []
+    if dir_path.exists():
+        search_dirs.append(dir_path)
+    try:
+        if130_dir_env = os.getenv("PM_IF130_DIR")
+        if if130_dir_env:
+            p_env = Path(if130_dir_env)
+            if p_env.exists():
+                search_dirs.append(p_env)
+    except Exception:
+        pass
+    try:
+        allow_local = (os.getenv("PM_ALLOW_LOCAL_FALLBACK", "").lower() in ("1", "true", "yes"))
+        if allow_local:
+            search_dirs.extend([config.ROOT_DIR, config.ROOT_DIR.parent])
+    except Exception:
+        pass
+    latest = find_latest_by_filename_date(search_dirs, [pat]) if search_dirs else None
+    if latest and latest.exists():
+        logger.warning("IF130 fallback to latest file: %s", latest)
+        return latest
+    return None
+
+
 def resolve_if126_path(d: date, use_sample: bool) -> Optional[Path]:
     # sample mode: find in sample dirs first
     if use_sample:
@@ -543,6 +587,13 @@ def load_tab_data(tab: str, use_sample: bool = True, ref_date: Optional[date] = 
             # fallback: 月曜ロジック
             if not src_dates:
                 src_dates = monday_with_prev_saturday(ref_date)
+        elif tab == "reschedule":
+            p = resolve_if130_path(ref_date, use_sample)
+            if not p:
+                raise FileNotFoundError("IF130データが見つかりません")
+            df = read_if126(p)
+            headers, letters, view_df, key_letter = build_reschedule(df, ref_date)
+            src_dt = extract_date_from_filename(p) or ref_date
         else:
             return {"error": "unknown tab"}
 
@@ -564,6 +615,12 @@ def load_tab_data(tab: str, use_sample: bool = True, ref_date: Optional[date] = 
             result["sourceDates"] = uniq
             # 短納期の名称候補（C列を優先。なければB列）
             result["nameLetter"] = "C" if "C" in letters else ("B" if "B" in letters else letters[0] if letters else "A")
+        if tab == "reschedule":
+            try:
+                result["sourceDates"] = [src_dt.strftime("%Y/%m/%d")]
+            except Exception:
+                pass
+            result["nameLetter"] = "C" if "C" in letters else (letters[0] if letters else "A")
         return result
     except Exception as e:
         logger.exception("データ生成エラー: %s", e)
@@ -574,7 +631,7 @@ def process_all_and_save(use_sample: bool = True, ref_date: Optional[date] = Non
     # 日次バッチ用：加工済みJSONを保存
     ref_date = ref_date or today_date()
     outputs: Dict[str, Path] = {}
-    for tab in ("houchozan", "text_items", "short"):
+    for tab in ("houchozan", "text_items", "short", "reschedule"):
         data = load_tab_data(tab, use_sample=use_sample, ref_date=ref_date)
         out = config.PROCESSED_DIR / f"{tab}_{yyyymmdd(ref_date)}.json"
         out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -625,6 +682,38 @@ def read_short(paths: List[Path]) -> pd.DataFrame:  # type: ignore[override]
     df = pd.concat(frames, ignore_index=True)
     df = df.drop_duplicates()
     return df
+
+
+def build_reschedule(df_if130: pd.DataFrame, today: date) -> Tuple[List[str], List[str], pd.DataFrame, str]:
+    max_idx = min(17, len(df_if130.columns))
+    view_df = df_if130.iloc[:, :max_idx].copy()
+    q_idx = col_letter_to_index("Q")
+    if q_idx < len(view_df.columns):
+        view_df = view_df[view_df.iloc[:, q_idx].astype(str).str.contains("前倒し", na=False)]
+    # 分類（R）：A列先頭 H->TRP, W->SVF
+    def _classify_a(x: str) -> str:
+        if not isinstance(x, str) or not x:
+            return ""
+        c = x[0].upper()
+        if c == "H":
+            return "TRP"
+        if c == "W":
+            return "SVF"
+        return ""
+    a_idx = 0
+    view_df = view_df.copy()
+    view_df["分類"] = view_df.iloc[:, a_idx].astype(str).apply(_classify_a)
+    # 自由入力（S）：A列キー
+    key_letter = "A"
+    inputs = load_user_inputs().get("reschedule", {})
+    free = []
+    for _, row in view_df.iterrows():
+        key = str(row.iloc[a_idx]) if a_idx < len(row) else ""
+        free.append(inputs.get(key, {}).get("自由入力", ""))
+    view_df["自由入力"] = free
+    headers = list(view_df.columns)
+    letters = [index_to_col_letter(i) for i in range(len(headers))]
+    return headers, letters, view_df.reset_index(drop=True), key_letter
 # ---------- Windows UNC 補助 ----------
 def _to_unc_if_possible(path: Path) -> Path:
     try:

@@ -34,6 +34,7 @@
       { id: '#hzNameSelect', tab: 'houchozan' },
       { id: '#tiNameSelect', tab: 'text_items' },
       { id: '#shortNameSelect', tab: 'short' },
+      { id: '#rsNameSelect', tab: 'reschedule' },
     ];
     nameSelects.forEach(({ id, tab }) => {
       const el = qs(id);
@@ -45,6 +46,49 @@
       }
     });
     setActiveTab('houchozan');
+
+    // 動的に再日程計画確認タブとフィルターを追加（HTMLが未対応でも動くように）
+    try {
+      const tabsSeg = qs('.tabs-segmented');
+      if (tabsSeg && !qs('button.tab[data-tab="reschedule"]', tabsSeg)) {
+        const btn = document.createElement('button');
+        btn.className = 'tab';
+        btn.dataset.tab = 'reschedule';
+        btn.textContent = '再日程計画確認';
+        btn.addEventListener('click', () => setActiveTab('reschedule'));
+        tabsSeg.appendChild(btn);
+      }
+      if (!qs('#filters-card-reschedule')) {
+        const anchor = qs('#filters-card-short') || qs('#filters-card-text_items') || qs('#filters-card-houchozan');
+        const sec = document.createElement('section');
+        sec.className = 'filters card filter-card hidden';
+        sec.id = 'filters-card-reschedule';
+        sec.innerHTML = `
+          <div class="card-title"><span class="dot dot-accent"></span> 再日程計画確認 フィルター</div>
+          <div class="filters-row names-row">
+            <label class="field wide"><span>名称</span>
+              <div class="hz-name">
+                <select id="rsNameSelect"></select>
+              </div>
+            </label>
+          </div>
+          <div class="filters-row" id="filters-reschedule">
+            <label class="field sm"><span>A列</span><input type="text" data-col="A" placeholder="部分一致" /></label>
+            <label class="field sm"><span>C列</span><input type="text" data-col="C" placeholder="部分一致" /></label>
+            <label class="field sm"><span>分類</span>
+              <select data-col="分類"><option value="">(すべて)</option><option value="TRP">TRP</option><option value="SVF">SVF</option></select>
+            </label>
+          </div>`;
+        anchor?.parentNode?.insertBefore(sec, anchor.nextSibling);
+        // wire up events for new selects/inputs
+        qsa('input[type="text"][data-col], select[data-col], input[type="date"][data-col]', sec).forEach(el => {
+          el.addEventListener('input', () => { applyFilters(); renderTable(); });
+          el.addEventListener('change', () => { applyFilters(); renderTable(); });
+        });
+        const rsSel = qs('#rsNameSelect');
+        rsSel?.addEventListener('change', () => { state.nameFilter['reschedule'] = rsSel.value || ''; if (state.tab==='reschedule'){ applyFilters(); renderTable(); }});
+      }
+    } catch {}
   }
 
   function setActiveTab(tab) {
@@ -375,7 +419,7 @@
   }
 
   function renderNameOptions(tab) {
-    const selectId = tab === 'houchozan' ? '#hzNameSelect' : (tab === 'text_items' ? '#tiNameSelect' : (tab === 'short' ? '#shortNameSelect' : null));
+    const selectId = tab === 'houchozan' ? '#hzNameSelect' : (tab === 'text_items' ? '#tiNameSelect' : (tab === 'short' ? '#shortNameSelect' : (tab === 'reschedule' ? '#rsNameSelect' : null)));
     if (!selectId) return;
     const sel = qs(selectId);
     if (!sel) return;
