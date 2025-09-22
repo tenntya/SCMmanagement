@@ -173,6 +173,13 @@ def resolve_if130_path(d: date, use_sample: bool) -> Optional[Path]:
         try_dates.append(d - timedelta(days=2))
 
     tmpl = _get_if130_template()
+    try:
+        # Convert drive-letter template to UNC if possible (using config helper)
+        from . import config as _cfg
+        if hasattr(_cfg, "_drive_template_to_unc"):
+            tmpl = _cfg._drive_template_to_unc(str(tmpl))  # type: ignore[attr-defined]
+    except Exception:
+        pass
     for dd in try_dates:
         target = _to_unc_if_possible(Path(str(tmpl).format(yyyymmdd=yyyymmdd(dd))))
         if target.exists():
@@ -196,6 +203,10 @@ def resolve_if130_path(d: date, use_sample: bool) -> Optional[Path]:
         allow_local = (os.getenv("PM_ALLOW_LOCAL_FALLBACK", "").lower() in ("1", "true", "yes"))
         if allow_local:
             search_dirs.extend([config.ROOT_DIR, config.ROOT_DIR.parent])
+    except Exception:
+        pass
+    try:
+        logger.debug("IF130 search dirs: %s, pattern: %s", [str(p) for p in search_dirs], pat)
     except Exception:
         pass
     latest = find_latest_by_filename_date(search_dirs, [pat]) if search_dirs else None
