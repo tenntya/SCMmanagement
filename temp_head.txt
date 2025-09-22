@@ -1,0 +1,116 @@
+﻿from pathlib import Path
+import sys
+import os
+import json
+import configparser
+
+
+# 蝓ｺ譛ｬ險ｭ螳・DEBUG = True
+HOST = "0.0.0.0"  # 莉鳳C縺九ｉ縺ｮ繧｢繧ｯ繧ｻ繧ｹ繧定ｨｱ蜿ｯ
+PORT = 5000
+
+# 繝ｫ繝ｼ繝医ョ繧｣繝ｬ繧ｯ繝医Μ蛻､螳夲ｼ磯壼ｸｸ: 繝ｪ繝昴ず繝医Μ逶ｴ荳・/ EXE: 螳溯｡後ヵ繧｡繧､繝ｫ縺ｮ髫｣・・if getattr(sys, "frozen", False):
+    DEBUG = False
+    ROOT_DIR = Path(sys.executable).resolve().parent
+else:
+    ROOT_DIR = Path(__file__).resolve().parent.parent
+
+# 繝ｭ繧ｰ
+LOG_DIR = ROOT_DIR / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_FILE = LOG_DIR / "app.log"
+
+# 繝輔ぃ繧､繝ｫ繧ｨ繝ｳ繧ｳ繝ｼ繝・ぅ繝ｳ繧ｰ・域里螳・ Windows Shift-JIS・・ENCODING_SJIS = "cp932"
+
+# 譛ｬ逡ｪ繝輔ぃ繧､繝ｫ繝代せ・医ョ繝輔か繝ｫ繝亥､・峨ょ､夜Κ險ｭ螳壹→迺ｰ蠅・､画焚縺ｧ荳頑嶌縺榊庄閭ｽ縲・IF126_TEMPLATE = r"K:\\PW_Tableau\\IF126_邏肴悄譌･遞狗ｮ｡逅・NHSAPOTHIF126_{yyyymmdd}.txt"
+SHORT_TEMPLATE = r"K:\\PW_MM_FileShare\\05_遏ｭ邏肴悄蜩∽ｸ隕ｧ\\隘ｿ逾杤\遏ｭ邏肴悄蜩・隘ｿ逾・_{yyyymmdd}.csv"
+
+# 繧ｵ繝ｳ繝励Ν繝輔ぃ繧､繝ｫ謗｢邏｢・・XE髫｣縺ｨ縺昴・隕ｪ縲・幕逋ｺ譎ゅ・繝ｫ繝ｼ繝医ｂ隕九ｋ・・SAMPLE_SEARCH_DIRS = [ROOT_DIR, ROOT_DIR.parent]
+SAMPLE_IF126_PATTERNS = ["NHSAPOTHIF126_*.txt"]
+SAMPLE_SHORT_PATTERNS = ["*.csv"]  # 譌･譛ｬ隱槫錐縺ｮCSV繧よ鏡縺・
+# 繝・・繧ｿ菫晏ｭ・DATA_DIR = ROOT_DIR / "procurement_manager" / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+USER_INPUTS_FILE = DATA_DIR / "user_inputs.json"
+PROCESSED_DIR = DATA_DIR / "processed"
+PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+
+# 譌･莉倥ヵ繧ｩ繝ｼ繝槭ャ繝・DATE_FMT_OUT = "%Y%m%d"
+
+
+# 螟夜Κ險ｭ螳壹・隱ｭ霎ｼ・・m_settings.ini 縺ｾ縺溘・ pm_settings.json縲∫腸蠅・､画焚・・SETTINGS_INI = ROOT_DIR / "pm_settings.ini"
+SETTINGS_JSON = ROOT_DIR / "pm_settings.json"
+
+
+def _apply_overrides() -> None:
+    global IF126_TEMPLATE, SHORT_TEMPLATE, ENCODING_SJIS, HOST, PORT, LOG_DIR, LOG_FILE, SAMPLE_SEARCH_DIRS
+
+    # 1) 迺ｰ蠅・､画焚縺ｧ荳頑嶌縺・    IF126_TEMPLATE = os.getenv("PM_IF126_TEMPLATE", IF126_TEMPLATE)
+    SHORT_TEMPLATE = os.getenv("PM_SHORT_TEMPLATE", SHORT_TEMPLATE)
+    ENCODING_SJIS = os.getenv("PM_ENCODING", ENCODING_SJIS)
+    host_env = os.getenv("PM_HOST")
+    port_env = os.getenv("PM_PORT")
+    if host_env:
+        HOST = host_env
+    if port_env:
+        try:
+            PORT = int(port_env)
+        except Exception:
+            pass
+    sample_dirs_env = os.getenv("PM_SAMPLE_DIRS")
+    if sample_dirs_env:
+        SAMPLE_SEARCH_DIRS = [Path(s.strip()) for s in sample_dirs_env.split(";") if s.strip()]
+
+    # 2) INI 繝輔ぃ繧､繝ｫ縺ｧ荳頑嶌縺・    if SETTINGS_INI.exists():
+        cp = configparser.ConfigParser()
+        try:
+            cp.read(SETTINGS_INI, encoding="utf-8")
+        except Exception:
+            cp.read(SETTINGS_INI)
+        if cp.has_section("paths"):
+            IF126_TEMPLATE = cp.get("paths", "IF126_TEMPLATE", fallback=IF126_TEMPLATE)
+            SHORT_TEMPLATE = cp.get("paths", "SHORT_TEMPLATE", fallback=SHORT_TEMPLATE)
+            sample_dirs = cp.get("paths", "SAMPLE_DIRS", fallback=None)
+            if sample_dirs:
+                SAMPLE_SEARCH_DIRS = [Path(s.strip()) for s in sample_dirs.split(";") if s.strip()]
+        if cp.has_section("encoding"):
+            ENCODING_SJIS = cp.get("encoding", "file", fallback=ENCODING_SJIS)
+        if cp.has_section("server"):
+            HOST = cp.get("server", "HOST", fallback=HOST)
+            try:
+                PORT = cp.getint("server", "PORT", fallback=PORT)
+            except Exception:
+                pass
+        if cp.has_section("logs"):
+            logdir = cp.get("logs", "LOG_DIR", fallback=None)
+            if logdir:
+                LOG_DIR = Path(logdir)
+                LOG_DIR.mkdir(parents=True, exist_ok=True)
+                LOG_FILE = LOG_DIR / "app.log"
+        return
+
+    # 3) JSON 繝輔ぃ繧､繝ｫ縺ｧ荳頑嶌縺搾ｼ井ｻｻ諢擾ｼ・    if SETTINGS_JSON.exists():
+        try:
+            d = json.loads(SETTINGS_JSON.read_text(encoding="utf-8"))
+        except Exception:
+            d = {}
+        paths = d.get("paths", {}) if isinstance(d.get("paths"), dict) else d
+        IF126_TEMPLATE = str(paths.get("IF126_TEMPLATE", IF126_TEMPLATE))
+        SHORT_TEMPLATE = str(paths.get("SHORT_TEMPLATE", SHORT_TEMPLATE))
+        enc = d.get("encoding", {})
+        if isinstance(enc, dict):
+            ENCODING_SJIS = str(enc.get("file", ENCODING_SJIS))
+        server = d.get("server", {})
+        if isinstance(server, dict):
+            HOST = str(server.get("HOST", HOST))
+            try:
+                PORT = int(server.get("PORT", PORT))
+            except Exception:
+                pass
+        logs = d.get("logs", {})
+        if isinstance(logs, dict) and logs.get("LOG_DIR"):
+            LOG_DIR = Path(str(logs["LOG_DIR"]))
+            LOG_DIR.mkdir(parents=True, exist_ok=True)
+            LOG_FILE = LOG_DIR / "app.log"
+
+
+_apply_overrides()

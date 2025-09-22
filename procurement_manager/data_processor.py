@@ -1,0 +1,650 @@
+from __future__ import annotations
+
+import json
+import logging
+from datetime import datetime, timedelta, date
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+import os
+import ctypes
+from ctypes import wintypes
+
+import pandas as pd
+
+from . import config
+
+
+logger = logging.getLogger(__name__)
+
+
+# ---------- 日付/列ユーティリティ ----------
+
+def today_date() -> date:
+    return date.today()
+
+
+def yyyymmdd(d: date) -> str:
+    return d.strftime(config.DATE_FMT_OUT)
+
+
+def monday_with_prev_saturday(d: date) -> List[date]:
+    # 月曜は前週土曜も対象
+    if d.weekday() == 0:
+        prev_sat = d - timedelta(days=2)
+        return [d, prev_sat]
+    return [d]
+
+
+def parse_any_date(s: str) -> Optional[date]:
+    if not s or not isinstance(s, str):
+        return None
+    s = s.strip()
+    if not s:
+        return None
+    # よくある形式を順に試す
+    fmts = [
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%Y%m%d",
+        "%y/%m/%d",
+        "%y-%m-%d",
+    ]
+    for f in fmts:
+        try:
+            return datetime.strptime(s, f).date()
+        except Exception:
+            continue
+    # pandasの推定に最後に頼る
+    try:
+        dt = pd.to_datetime(s, errors="coerce").date()
+        return dt
+    except Exception:
+        return None
+
+
+def col_letter_to_index(letter: str) -> int:
+    # A->0, B->1, ..., Z->25, AA->26, AB->27, AC->28, ...
+    letter = letter.strip().upper()
+    result = 0
+    for ch in letter:
+        result = result * 26 + (ord(ch) - ord('A') + 1)
+    return result - 1
+
+
+def index_to_col_letter(idx: int) -> str:
+    idx += 1
+    s = ""
+    while idx:
+        idx, r = divmod(idx - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+
+def select_by_letters(df: pd.DataFrame, letters: List[str]) -> Tuple[pd.DataFrame, List[str]]:
+    cols = []
+    names = []
+    for lt in letters:
+        i = col_letter_to_index(lt)
+        if i < len(df.columns):
+            cols.append(df.columns[i])
+            names.append(lt)
+    return df[cols].copy(), names
+
+
+# ---------- サンプル/実データ パス解決 ----------
+
+def find_latest_by_patterns(search_dirs: List[Path], patterns: List[str]) -> Optional[Path]:
+    candidates: List[Tuple[datetime, Path]] = []
+    for d in search_dirs:
+        for pat in patterns:
+            for p in d.glob(pat):
+                try:
+                    stat = p.stat()
+                    candidates.append((datetime.fromtimestamp(stat.st_mtime), p))
+                except Exception:
+                    continue
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0][1]
+
+
+def find_latest_by_filename_date(search_dirs: List[Path], patterns: List[str]) -> Optional[Path]:
+    best: Tuple[Optional[date], datetime, Path] | None = None
+    for d in search_dirs:
+        for pat in patterns:
+            for p in d.glob(pat):
+                try:
+                    dt_file = extract_date_from_filename(p)
+                    stat = p.stat()
+                    mtime = datetime.fromtimestamp(stat.st_mtime)
+                    key = (dt_file, mtime, p)
+                    if best is None:
+                        best = key
+                    else:
+                        # まずファイル名の日付が大きいものを優先、同値なら更新日時
+                        if (best[0] or date.min) < (dt_file or date.min) or (
+                            (best[0] == dt_file) and (best[1] < mtime)
+                        ):
+                            best = key
+                except Exception:
+                    continue
+    return best[2] if best else None
+
+
+def resolve_if126_path(d: date, use_sample: bool) -> Optional[Path]:
+    # sample mode: find in sample dirs first
+    if use_sample:
+        p = find_latest_by_patterns(config.SAMPLE_SEARCH_DIRS, config.SAMPLE_IF126_PATTERNS)
+        if p and p.exists():
+            logger.info("IF126 sample resolved: %s", p)
+            return p
+    # 本番データ優先: 当日 → (月曜は前土曜) → ディレクトリ内の最新
+    try_dates: List[date] = [d]
+    if d.weekday() == 0:  # Monday
+        try_dates.append(d - timedelta(days=2))
+
+    for dd in try_dates:
+        target = _to_unc_if_possible(Path(config.IF126_TEMPLATE.format(yyyymmdd=yyyymmdd(dd))))
+        if target.exists():
+            logger.info("IF126 path resolved: %s", target)
+            return target
+
+    # ディレクトリ内の最新を探索（複数候補）。ファイル名の日付を優先。
+    dir_path = _to_unc_if_possible(Path(config.IF126_TEMPLATE)).parent
+    pat = Path(config.IF126_TEMPLATE).name.replace("{yyyymmdd}", "*")
+    search_dirs: List[Path] = []
+    if dir_path.exists():
+        search_dirs.append(dir_path)
+    # 追加: 環境変数でIF126_DIRがあれば優先
+    try:
+        import os as _os
+        if126_dir_env = _os.getenv("PM_IF126_DIR")
+        if if126_dir_env:
+            p_env = Path(if126_dir_env)
+            if p_env.exists():
+                search_dirs.append(p_env)
+    except Exception:
+        pass
+    # 開発時の手元配置を考慮
+    try:
+        # 本番運用ではローカル探索は避けるが、環境変数で明示許可された場合は有効化
+        from . import config as _cfg  # lazy import to avoid cycles at top
+        allow_local = (os.getenv("PM_ALLOW_LOCAL_FALLBACK", "").lower() in ("1", "true", "yes"))
+        if allow_local:
+            search_dirs.extend([_cfg.ROOT_DIR, _cfg.ROOT_DIR.parent])
+    except Exception:
+        pass
+    try:
+        logger.debug("IF126 search dirs: %s, pattern: %s", [str(p) for p in search_dirs], pat)
+    except Exception:
+        pass
+    latest = find_latest_by_filename_date(search_dirs, [pat]) if search_dirs else None
+    if latest and latest.exists():
+        logger.warning("IF126 fallback to latest file: %s", latest)
+        return latest
+    return None
+
+
+def resolve_short_paths(d: date, use_sample: bool) -> List[Path]:
+    dates = monday_with_prev_saturday(d)
+    paths: List[Path] = []
+    if use_sample:
+        p = find_latest_by_patterns(config.SAMPLE_SEARCH_DIRS, config.SAMPLE_SHORT_PATTERNS)
+        if p and p.exists():
+            return [p]
+        return []
+    else:
+        for dtv in dates:
+            target = _to_unc_if_possible(Path(config.SHORT_TEMPLATE.format(yyyymmdd=yyyymmdd(dtv))))
+            if target.exists():
+                paths.append(target)
+        if paths:
+            return paths
+        # 最新ファイルにフォールバック（名称ゆらぎ対応のパターンを広げ、ファイル名日付を優先）
+        dir_path = _to_unc_if_possible(Path(config.SHORT_TEMPLATE)).parent
+        name = Path(config.SHORT_TEMPLATE).name
+        patterns_set = set()
+        patterns_set.add(name.replace("{yyyymmdd}", "*"))
+        patterns_set.add(name.replace("(西神)", "*").replace("{yyyymmdd}", "*"))
+        patterns_set.add(name.replace("（西神）", "*").replace("{yyyymmdd}", "*"))
+        patterns_set.add(name.replace("短納期品", "短納期").replace("{yyyymmdd}", "*"))
+        patterns_set.add("*短納期*.csv")
+        patterns_set.add("*西神*.csv")
+        patterns = list(patterns_set)
+
+        search_dirs: List[Path] = []
+        if dir_path.exists():
+            search_dirs.append(dir_path)
+        try:
+            short_dir_env = os.getenv("PM_SHORT_DIR")
+            if short_dir_env:
+                p_env = Path(short_dir_env)
+                if p_env.exists():
+                    search_dirs.append(p_env)
+        except Exception:
+            pass
+        try:
+            from . import config as _cfg  # lazy
+            allow_local = (os.getenv("PM_ALLOW_LOCAL_FALLBACK", "").lower() in ("1", "true", "yes"))
+            if allow_local:
+                search_dirs.extend([_cfg.ROOT_DIR, _cfg.ROOT_DIR.parent])
+        except Exception:
+            pass
+        try:
+            logger.debug("SHORT search dirs: %s, patterns: %s", [str(p) for p in search_dirs], patterns)
+        except Exception:
+            pass
+        latest = find_latest_by_filename_date(search_dirs, patterns) if search_dirs else None
+        if latest and latest.exists():
+            logger.warning("SHORT fallback to latest file: %s", latest)
+            return [latest]
+        return []
+
+
+def extract_date_from_filename(p: Path) -> Optional[date]:
+    try:
+        import re
+        m = re.search(r"(20\d{6})", p.name)
+        if m:
+            s = m.group(1)
+            return datetime.strptime(s, "%Y%m%d").date()
+    except Exception:
+        pass
+    return None
+
+
+# ---------- データ読み込み ----------
+
+def read_if126(path: Path) -> pd.DataFrame:
+    df = pd.read_csv(path, sep="\t", encoding=config.ENCODING_SJIS, dtype=str, keep_default_na=False)
+    return df
+
+
+def read_short(paths: List[Path]) -> pd.DataFrame:
+    frames = []
+    for p in paths:
+        try:
+            frames.append(pd.read_csv(p, encoding=config.ENCODING_SJIS, dtype=str, keep_default_na=False))
+        except Exception as e:
+            logger.exception("短納期CSV読込失敗: %s", p)
+    if not frames:
+        return pd.DataFrame()
+    df = pd.concat(frames, ignore_index=True)
+    df = df.drop_duplicates()
+    return df
+
+
+# ---------- 永続化（自由入力/備考） ----------
+
+def _ensure_user_inputs_file():
+    if not config.USER_INPUTS_FILE.exists():
+        config.USER_INPUTS_FILE.write_text("{}", encoding="utf-8")
+
+
+def load_user_inputs() -> Dict:
+    _ensure_user_inputs_file()
+    try:
+        data = json.loads(config.USER_INPUTS_FILE.read_text(encoding="utf-8"))
+        changed = _normalize_user_inputs_inplace(data)
+        if changed:
+            tmp = config.USER_INPUTS_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(config.USER_INPUTS_FILE)
+        return data
+    except Exception:
+        return {}
+
+
+def save_user_input(tab: str, key: str, field: str, value: str) -> None:
+    data = load_user_inputs()
+    tabmap = data.setdefault(tab, {})
+    entry = tabmap.setdefault(key, {})
+    # 正規化されたフィールド名に格納
+    field_norm = _normalize_field_name(tab, field)
+    entry[field_norm] = value
+    tmp = config.USER_INPUTS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(config.USER_INPUTS_FILE)
+
+
+def _normalize_field_name(tab: str, field: str) -> str:
+    f = (field or "").strip()
+    if tab in ("houchozan", "text_items"):
+        # 自由入力の表記揺れ・文字化け救済
+        if f != "自由入力":
+            if "自由" in f:
+                return "自由入力"
+        return "自由入力" if f == "" else f
+    if tab == "short":
+        if f != "備考":
+            if f and f.startswith("備"):
+                return "備考"
+        return "備考" if f == "" else f
+    return f
+
+
+def _normalize_user_inputs_inplace(data: Dict) -> bool:
+    changed = False
+    if not isinstance(data, dict):
+        return False
+    for tab, canonical in (("houchozan", "自由入力"), ("text_items", "自由入力"), ("short", "備考")):
+        tabmap = data.get(tab)
+        if not isinstance(tabmap, dict):
+            continue
+        for key, entry in list(tabmap.items()):
+            if not isinstance(entry, dict):
+                continue
+            # 文字化け/表記揺れキーを正規化
+            if canonical not in entry:
+                # 候補: 含む/先頭一致
+                alt = None
+                for k in list(entry.keys()):
+                    if k == canonical:
+                        alt = None
+                        break
+                    if (canonical.startswith("自由") and "自由" in k) or (canonical == "備考" and (k.startswith("備") or "備" in k)):
+                        alt = k
+                        break
+                if alt is not None:
+                    entry[canonical] = entry.pop(alt)
+                    changed = True
+    return changed
+
+
+# ---------- 設定（名称リストなど） ----------
+
+def _load_all() -> Dict:
+    _ensure_user_inputs_file()
+    try:
+        return json.loads(config.USER_INPUTS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_all(data: Dict) -> None:
+    tmp = config.USER_INPUTS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(config.USER_INPUTS_FILE)
+
+
+def get_houchozan_names() -> Dict[str, object]:
+    data = _load_all()
+    settings = data.setdefault("_settings", {})
+    names = settings.setdefault("houchozan_names", [])
+    current = settings.get("houchozan_current_name")
+    # 型補正
+    if not isinstance(names, list):
+        names = []
+        settings["houchozan_names"] = names
+    if current is not None and not isinstance(current, str):
+        current = None
+        settings["houchozan_current_name"] = None
+    _save_all(data)
+    return {"names": names, "current": current}
+
+
+def set_houchozan_name(name: str, add_if_missing: bool = True) -> Dict[str, object]:
+    name = (name or "").strip()
+    data = _load_all()
+    settings = data.setdefault("_settings", {})
+    names = settings.setdefault("houchozan_names", [])
+    if add_if_missing and name and name not in names:
+        names.append(name)
+    if name:
+        settings["houchozan_current_name"] = name
+    _save_all(data)
+    return {"names": names, "current": settings.get("houchozan_current_name")}
+
+
+# ---------- タブ別データ生成 ----------
+
+IF126_DISPLAY_LETTERS = ["B", "C", "D", "E", "I", "J", "O", "P", "R", "Y", "AC"]
+
+
+def _add_delay_and_classification(df: pd.DataFrame, classification_source_letter: str, today: date) -> pd.DataFrame:
+    # 遅延日数: P列（16列目）を日付解釈
+    p_idx = col_letter_to_index("P")
+    if p_idx < len(df.columns):
+        due_series = df.iloc[:, p_idx].apply(parse_any_date)
+        delay_days = due_series.apply(lambda d: max(0, (today - d).days) if isinstance(d, date) else None)
+        df = df.copy()
+        df["遅延日数"] = delay_days
+    else:
+        df = df.copy()
+        df["遅延日数"] = None
+
+    # 分類: 指定列の先頭文字で判定
+    src_idx = col_letter_to_index(classification_source_letter)
+    def _classify(x: str) -> str:
+        if not isinstance(x, str) or not x:
+            return ""
+        c = x[0].upper()
+        if c == "H":
+            return "TRP"
+        if c == "W":
+            return "SVF"
+        return ""
+
+    if src_idx < len(df.columns):
+        df["分類"] = df.iloc[:, src_idx].apply(_classify)
+    else:
+        df["分類"] = ""
+    return df
+
+
+def build_houchozan(df_if: pd.DataFrame, today: date) -> Tuple[List[str], List[str], pd.DataFrame, str]:
+    # 期限切れ: P列 < today
+    p_idx = col_letter_to_index("P")
+    if p_idx < len(df_if.columns):
+        due_series = df_if.iloc[:, p_idx].apply(parse_any_date)
+        df_if = df_if[due_series.apply(lambda d: isinstance(d, date) and d < today)]
+    # 表示列
+    view_df, letters = select_by_letters(df_if, IF126_DISPLAY_LETTERS)
+    # 追加列
+    df2 = df_if.copy()
+    df2 = _add_delay_and_classification(df2, classification_source_letter="D", today=today)
+    # 自由入力（I列キー）
+    key_letter = "I"
+    key_idx = col_letter_to_index(key_letter)
+    inputs = load_user_inputs().get("houchozan", {})
+    free = []
+    for _, row in df2.iterrows():
+        key = str(row.iloc[key_idx]) if key_idx < len(row) else ""
+        free.append(inputs.get(key, {}).get("自由入力", ""))
+    view_df = view_df.copy()
+    view_df["遅延日数"] = df2["遅延日数"].values
+    view_df["分類"] = df2["分類"].values
+    view_df["自由入力"] = free
+    letters = letters + [None, None, None]
+    return list(view_df.columns), letters, view_df.reset_index(drop=True), key_letter
+
+
+def build_text_items(df_if: pd.DataFrame, today: date) -> Tuple[List[str], List[str], pd.DataFrame, str]:
+    # D列が空白のみ
+    d_idx = col_letter_to_index("D")
+    if d_idx < len(df_if.columns):
+        df_if = df_if[df_if.iloc[:, d_idx].astype(str).str.strip() == ""]
+    # 表示列
+    view_df, letters = select_by_letters(df_if, IF126_DISPLAY_LETTERS)
+    # 追加列（分類はF列）
+    df2 = df_if.copy()
+    df2 = _add_delay_and_classification(df2, classification_source_letter="F", today=today)
+    # 自由入力（I列キー）
+    key_letter = "I"
+    key_idx = col_letter_to_index(key_letter)
+    inputs = load_user_inputs().get("text_items", {})
+    free = []
+    for _, row in df2.iterrows():
+        key = str(row.iloc[key_idx]) if key_idx < len(row) else ""
+        free.append(inputs.get(key, {}).get("自由入力", ""))
+    view_df = view_df.copy()
+    view_df["遅延日数"] = df2["遅延日数"].values
+    view_df["分類"] = df2["分類"].values
+    view_df["自由入力"] = free
+    letters = letters + [None, None, None]
+    return list(view_df.columns), letters, view_df.reset_index(drop=True), key_letter
+
+
+def build_short(df_short: pd.DataFrame, today: date) -> Tuple[List[str], List[str], pd.DataFrame, str]:
+    # A〜M列（13列）
+    letters = [index_to_col_letter(i) for i in range(13)]
+    if df_short.empty:
+        view_df = pd.DataFrame(columns=[])  # 空
+        headers = []
+        letters_ret: List[Optional[str]] = []
+    else:
+        max_idx = min(13, len(df_short.columns))
+        headers = list(df_short.columns[:max_idx])
+        view_df = df_short.iloc[:, :max_idx].copy()
+        letters = [index_to_col_letter(i) for i in range(max_idx)]
+    # 備考（自由入力、A列キー）
+    key_letter = "A"
+    key_idx = 0
+    inputs = load_user_inputs().get("short", {})
+    notes = []
+    for _, row in view_df.iterrows():
+        key = str(row.iloc[key_idx]) if key_idx < len(row) else ""
+        notes.append(inputs.get(key, {}).get("備考", ""))
+    view_df = view_df.copy()
+    view_df["備考"] = notes
+    letters_ret = letters + [None]
+    return list(view_df.columns), letters_ret, view_df.reset_index(drop=True), key_letter
+
+
+def load_tab_data(tab: str, use_sample: bool = True, ref_date: Optional[date] = None) -> Dict:
+    # 呼び出し元の use_sample 指定を尊重し、既定は引数デフォルトに従う
+    ref_date = ref_date or today_date()
+
+    try:
+        if tab in ("houchozan", "text_items"):
+            p = resolve_if126_path(ref_date, use_sample)
+            if not p:
+                raise FileNotFoundError("IF126データが見つかりません")
+            df = read_if126(p)
+            # 取得日
+            src_dt = extract_date_from_filename(p) or ref_date
+            if tab == "houchozan":
+                headers, letters, view_df, key_letter = build_houchozan(df, ref_date)
+            else:
+                headers, letters, view_df, key_letter = build_text_items(df, ref_date)
+        elif tab == "short":
+            ps = resolve_short_paths(ref_date, use_sample)
+            if not ps:
+                raise FileNotFoundError("短納期CSVが見つかりません")
+            df = read_short(ps)
+            headers, letters, view_df, key_letter = build_short(df, ref_date)
+            # 取得日（ファイル名から抽出）
+            src_dates = []
+            for pp in ps:
+                dt = extract_date_from_filename(pp)
+                if dt:
+                    src_dates.append(dt)
+            # fallback: 月曜ロジック
+            if not src_dates:
+                src_dates = monday_with_prev_saturday(ref_date)
+        else:
+            return {"error": "unknown tab"}
+
+        rows = view_df.astype(str).fillna("").values.tolist()
+        result = {
+            "headers": headers,
+            "letters": letters,
+            "rows": rows,
+            "keyLetter": key_letter,
+        }
+        # 日付情報を付与
+        if tab in ("houchozan", "text_items"):
+            result["sourceDates"] = [src_dt.strftime("%Y/%m/%d")]
+            # 名称の列（C列）を明示
+            result["nameLetter"] = "C"
+        elif tab == "short":
+            # 重複排除して昇順
+            uniq = sorted({d.strftime("%Y/%m/%d") for d in src_dates})
+            result["sourceDates"] = uniq
+            # 短納期の名称候補（C列を優先。なければB列）
+            result["nameLetter"] = "C" if "C" in letters else ("B" if "B" in letters else letters[0] if letters else "A")
+        return result
+    except Exception as e:
+        logger.exception("データ生成エラー: %s", e)
+        return {"error": str(e)}
+
+
+def process_all_and_save(use_sample: bool = True, ref_date: Optional[date] = None) -> Dict[str, Path]:
+    # 日次バッチ用：加工済みJSONを保存
+    ref_date = ref_date or today_date()
+    outputs: Dict[str, Path] = {}
+    for tab in ("houchozan", "text_items", "short"):
+        data = load_tab_data(tab, use_sample=use_sample, ref_date=ref_date)
+        out = config.PROCESSED_DIR / f"{tab}_{yyyymmdd(ref_date)}.json"
+        out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        outputs[tab] = out
+    return outputs
+
+
+# ---------- Robust CSV reading (fallback encodings) ----------
+def _read_csv_with_fallback(path: Path, sep: Optional[str] = None) -> pd.DataFrame:
+    enc_order = []
+    seen = set()
+    for e in [getattr(config, "ENCODING_SJIS", None), "cp932", "utf-8-sig", "utf-8"]:
+        if e and e not in seen:
+            enc_order.append(e)
+            seen.add(e)
+    last_err: Optional[Exception] = None
+    for enc in enc_order:
+        try:
+            kwargs = {"dtype": str, "keep_default_na": False}
+            if sep is not None:
+                kwargs["sep"] = sep
+            df = pd.read_csv(path, encoding=enc, **kwargs)
+            logger.info("read %s with encoding=%s", path, enc)
+            return df
+        except Exception as e:
+            last_err = e
+            continue
+    logger.exception("failed to read %s with encodings %s", path, enc_order)
+    if last_err:
+        raise last_err
+    raise RuntimeError(f"failed to read: {path}")
+
+
+# Override readers to use fallback
+def read_if126(path: Path) -> pd.DataFrame:  # type: ignore[override]
+    return _read_csv_with_fallback(path, sep="\t")
+
+
+def read_short(paths: List[Path]) -> pd.DataFrame:  # type: ignore[override]
+    frames = []
+    for p in paths:
+        try:
+            frames.append(_read_csv_with_fallback(p))
+        except Exception:
+            logger.exception("短納期CSV読込失敗: %s", p)
+    if not frames:
+        return pd.DataFrame()
+    df = pd.concat(frames, ignore_index=True)
+    df = df.drop_duplicates()
+    return df
+# ---------- Windows UNC 補助 ----------
+def _to_unc_if_possible(path: Path) -> Path:
+    try:
+        if os.name != "nt":
+            return path
+        s = str(path)
+        if len(s) < 2 or s[1] != ":":
+            return path  # not a drive-letter path
+        WNetGetUniversalNameW = ctypes.windll.mpr.WNetGetUniversalNameW  # type: ignore[attr-defined]
+        WNetGetUniversalNameW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.LPVOID, ctypes.POINTER(wintypes.DWORD)]
+        WNetGetUniversalNameW.restype = wintypes.DWORD
+        UNIVERSAL_NAME_INFO_LEVEL = 1
+        buf_size = 65536
+        buf = ctypes.create_unicode_buffer(buf_size)
+        size = wintypes.DWORD(ctypes.sizeof(buf))
+        rc = WNetGetUniversalNameW(s, UNIVERSAL_NAME_INFO_LEVEL, ctypes.byref(buf), ctypes.byref(size))
+        if rc == 0:
+            unc = buf.value
+            if unc:
+                return Path(unc)
+    except Exception:
+        pass
+    return path

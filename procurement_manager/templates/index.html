@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>調達品データ管理</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+  <script defer src="{{ url_for('static', filename='js/app2.js') }}"></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="container header-inner">
+      <h1>調達品データ管理</h1>
+      <div class="header-actions">
+        <label class="mode-toggle" title="本番データ/サンプル切替">
+          <input type="checkbox" id="prodToggle" checked>
+          <span>本番データ</span>
+        </label>
+        <button id="refreshBtn" class="btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.13-3.36L23 10"></path><path d="M1 14l5.36 4.36A9 9 0 0 0 20.49 15"></path></svg>
+          再読込
+        </button>
+        <button id="exportBtn" class="btn btn-primary">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          CSVエクスポート
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="container">
+    <nav class="tabs">
+      <div class="tabs-segmented">
+        <button class="tab active" data-tab="houchozan">発注残管理</button>
+        <button class="tab" data-tab="short">短納期管理</button>
+        <button class="tab" data-tab="text_items">テキスト品管理</button>
+      </div>
+      <div class="logic-switch">
+        条件:
+        <label class="chip"><input type="radio" name="logic" value="AND" checked /> AND</label>
+        <label class="chip"><input type="radio" name="logic" value="OR" /> OR</label>
+      </div>
+      <div class="data-dates" title="データ取得日">
+        <span class="muted">取得日:</span>
+        <span id="dataDates" class="date-badges"></span>
+      </div>
+    </nav>
+
+    <section class="filters card filter-card" id="filters-card-houchozan">
+      <div class="card-title"><span class="dot dot-accent"></span> 発注残 管理フィルター</div>
+      <div class="filters-row hz-names-row">
+        <label class="field wide"><span>名称</span>
+          <div class="hz-name">
+            <select id="hzNameSelect"></select>
+            <input type="text" id="hzNameInput" placeholder="名称を追加" />
+            <button class="btn" id="hzNameAddBtn" type="button">追加</button>
+          </div>
+        </label>
+      </div>
+      <div class="filters-row" id="filters-houchozan">
+        <label class="field sm"><span>C列</span><input type="text" data-col="C" placeholder="部分一致" /></label>
+        <label class="field sm"><span>D列</span><input type="text" data-col="D" placeholder="部分一致" /></label>
+        <label class="field sm"><span>F列</span><input type="text" data-col="F" placeholder="部分一致" /></label>
+        <label class="field sm"><span>分類</span>
+          <select data-col="分類">
+            <option value="">(すべて)</option>
+            <option value="TRP">TRP</option>
+            <option value="SVF">SVF</option>
+          </select>
+        </label>
+        <label class="field sm"><span>品目種別</span>
+          <select data-col="__kind__">
+            <option value="">(すべて)</option>
+            <option value="テキスト品">テキスト品</option>
+            <option value="消耗品">消耗品</option>
+            <option value="通常">通常</option>
+          </select>
+        </label>
+        <label class="field wide"><span>納期(P)</span>
+          <div class="range">
+            <input type="date" data-col="P" data-date="from" />
+            <span>〜</span>
+            <input type="date" data-col="P" data-date="to" />
+          </div>
+        </label>
+      </div>
+    </section>
+
+    <section class="filters card filter-card hidden" id="filters-card-text_items">
+      <div class="card-title"><span class="dot dot-accent"></span> テキスト品 管理フィルター</div>
+      <div class="filters-row names-row">
+        <label class="field wide"><span>名称</span>
+          <div class="hz-name">
+            <select id="tiNameSelect"></select>
+          </div>
+        </label>
+      </div>
+      <div class="filters-row" id="filters-text_items">
+        <label class="field sm"><span>C列</span><input type="text" data-col="C" placeholder="部分一致" /></label>
+        <label class="field sm"><span>D列</span><input type="text" data-col="D" placeholder="部分一致" /></label>
+        <label class="field sm"><span>F列</span><input type="text" data-col="F" placeholder="部分一致" /></label>
+        <label class="field sm"><span>分類</span>
+          <select data-col="分類">
+            <option value="">(すべて)</option>
+            <option value="TRP">TRP</option>
+            <option value="SVF">SVF</option>
+          </select>
+        </label>
+        <label class="field wide"><span>納期(P)</span>
+          <div class="range">
+            <input type="date" data-col="P" data-date="from" />
+            <span>〜</span>
+            <input type="date" data-col="P" data-date="to" />
+          </div>
+        </label>
+      </div>
+    </section>
+
+    <section class="filters card filter-card hidden" id="filters-card-short">
+      <div class="card-title"><span class="dot dot-accent"></span> 短納期 管理フィルター</div>
+      <div class="filters-row names-row">
+        <label class="field wide"><span>名称</span>
+          <div class="hz-name">
+            <select id="shortNameSelect"></select>
+          </div>
+        </label>
+      </div>
+      <div class="filters-row" id="filters-short">
+        <label class="field sm"><span>A列</span><input type="text" data-col="A" placeholder="部分一致" /></label>
+        <label class="field sm"><span>I列</span><input type="text" data-col="I" placeholder="部分一致" /></label>
+        <label class="field sm"><span>K列</span><input type="text" data-col="K" placeholder="部分一致" /></label>
+      </div>
+    </section>
+
+    <main>
+      <div class="card table-wrapper">
+        <div id="table-container"></div>
+      </div>
+      <div class="pager">
+        <button id="prevPage" class="btn">前へ</button>
+        <span id="pageInfo" class="muted"></span>
+        <button id="nextPage" class="btn">次へ</button>
+      </div>
+    </main>
+  </div>
+
+  <footer>
+    <small>© SCM Management</small>
+  </footer>
+</body>
+</html>
