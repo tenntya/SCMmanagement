@@ -132,6 +132,35 @@ def find_latest_by_filename_date(search_dirs: List[Path], patterns: List[str]) -
     return best[2] if best else None
 
 
+def _get_if130_template() -> str:
+    env = os.getenv("PM_IF130_TEMPLATE")
+    if env:
+        return env
+    try:
+        ini = getattr(config, "SETTINGS_INI", None)
+        if ini and Path(ini).exists():
+            import configparser as _cp
+            cp = _cp.ConfigParser()
+            try:
+                cp.read(ini, encoding="utf-8")
+            except Exception:
+                cp.read(ini)
+            if cp.has_section("paths") and cp.has_option("paths", "IF130_TEMPLATE"):
+                return cp.get("paths", "IF130_TEMPLATE")
+    except Exception:
+        pass
+    try:
+        js = getattr(config, "SETTINGS_JSON", None)
+        if js and Path(js).exists():
+            d = json.loads(Path(js).read_text(encoding="utf-8"))
+            paths = d.get("paths", {}) if isinstance(d.get("paths"), dict) else d
+            if "IF130_TEMPLATE" in paths:
+                return str(paths["IF130_TEMPLATE"])
+    except Exception:
+        pass
+    return r"K:\\PW_Tableau\\IF130_MRP警告リスト\\NHSAPOTHIF130_{yyyymmdd}.txt"
+
+
 def resolve_if130_path(d: date, use_sample: bool) -> Optional[Path]:
     if use_sample:
         patterns = getattr(config, "SAMPLE_IF130_PATTERNS", ["NHSAPOTHIF130_*.txt"])
@@ -143,7 +172,7 @@ def resolve_if130_path(d: date, use_sample: bool) -> Optional[Path]:
     if d.weekday() == 0:
         try_dates.append(d - timedelta(days=2))
 
-    tmpl = os.getenv("PM_IF130_TEMPLATE") or getattr(config, "IF130_TEMPLATE", r"K:\\PW_Tableau\\IF130_MRP警告リスト\\NHSAPOTHIF130_{yyyymmdd}.txt")
+    tmpl = _get_if130_template()
     for dd in try_dates:
         target = _to_unc_if_possible(Path(str(tmpl).format(yyyymmdd=yyyymmdd(dd))))
         if target.exists():

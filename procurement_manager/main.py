@@ -93,12 +93,19 @@ def create_app() -> Flask:
             today = _date.today()
             if_path = dp.resolve_if126_path(today, use_sample=False)
             short_paths = dp.resolve_short_paths(today, use_sample=False)
+            if130_path = None
+            try:
+                if130_path = dp.resolve_if130_path(today, use_sample=False)
+            except Exception:
+                pass
             return jsonify({
                 "rootDir": str(getattr(config, "ROOT_DIR", "")),
                 "encoding": getattr(config, "ENCODING_SJIS", ""),
                 "if126Template": getattr(config, "IF126_TEMPLATE", ""),
+                "if130Template": getattr(config, "IF130_TEMPLATE", getattr(config, "PM_IF130_TEMPLATE", "")),
                 "shortTemplate": getattr(config, "SHORT_TEMPLATE", ""),
                 "if126Resolved": str(if_path) if if_path else None,
+                "if130Resolved": str(if130_path) if if130_path else None,
                 "shortResolved": [str(p) for p in short_paths],
             })
         except Exception as e:
