@@ -79,10 +79,11 @@ def _drive_template_to_unc(tmpl: str) -> str:
 
 
 def _apply_overrides() -> None:
-    global IF126_TEMPLATE, SHORT_TEMPLATE, ENCODING_SJIS, HOST, PORT, LOG_DIR, LOG_FILE, SAMPLE_SEARCH_DIRS
+    global IF126_TEMPLATE, SHORT_TEMPLATE, ENCODING_SJIS, HOST, PORT, LOG_DIR, LOG_FILE, SAMPLE_SEARCH_DIRS, IF130_TEMPLATE
 
     # 1) 環境変数で上書き
     IF126_TEMPLATE = os.getenv("PM_IF126_TEMPLATE", IF126_TEMPLATE)
+    IF130_TEMPLATE = os.getenv("PM_IF130_TEMPLATE", globals().get("IF130_TEMPLATE", r"K:\\PW_Tableau\\IF130_MRP隴ｦ蜻翫Μ繧ｹ繝・\\NHSAPOTHIF130_{yyyymmdd}.txt"))
     SHORT_TEMPLATE = os.getenv("PM_SHORT_TEMPLATE", SHORT_TEMPLATE)
     ENCODING_SJIS = os.getenv("PM_ENCODING", ENCODING_SJIS)
     host_env = os.getenv("PM_HOST")
@@ -102,11 +103,12 @@ def _apply_overrides() -> None:
     if SETTINGS_INI.exists():
         cp = configparser.ConfigParser()
         try:
-            cp.read(SETTINGS_INI, encoding="utf-8")
+            cp.read(SETTINGS_INI, encoding="utf-8-sig")
         except Exception:
             cp.read(SETTINGS_INI)
         if cp.has_section("paths"):
             IF126_TEMPLATE = cp.get("paths", "IF126_TEMPLATE", fallback=IF126_TEMPLATE)
+            IF130_TEMPLATE = cp.get("paths", "IF130_TEMPLATE", fallback=IF130_TEMPLATE)
             SHORT_TEMPLATE = cp.get("paths", "SHORT_TEMPLATE", fallback=SHORT_TEMPLATE)
             sample_dirs = cp.get("paths", "SAMPLE_DIRS", fallback=None)
             if sample_dirs:
@@ -127,6 +129,7 @@ def _apply_overrides() -> None:
                 LOG_FILE = LOG_DIR / "app.log"
         # Convert drive-letter templates to UNC if mapping exists
         IF126_TEMPLATE = _drive_template_to_unc(IF126_TEMPLATE)
+        IF130_TEMPLATE = _drive_template_to_unc(IF130_TEMPLATE)
         SHORT_TEMPLATE = _drive_template_to_unc(SHORT_TEMPLATE)
         return
 
@@ -138,6 +141,7 @@ def _apply_overrides() -> None:
             d = {}
         paths = d.get("paths", {}) if isinstance(d.get("paths"), dict) else d
         IF126_TEMPLATE = str(paths.get("IF126_TEMPLATE", IF126_TEMPLATE))
+        IF130_TEMPLATE = str(paths.get("IF130_TEMPLATE", IF130_TEMPLATE))
         SHORT_TEMPLATE = str(paths.get("SHORT_TEMPLATE", SHORT_TEMPLATE))
         enc = d.get("encoding", {})
         if isinstance(enc, dict):
@@ -156,6 +160,7 @@ def _apply_overrides() -> None:
             LOG_FILE = LOG_DIR / "app.log"
     # Convert drive-letter templates to UNC if mapping exists (final)
     IF126_TEMPLATE = _drive_template_to_unc(IF126_TEMPLATE)
+    IF130_TEMPLATE = _drive_template_to_unc(IF130_TEMPLATE)
     SHORT_TEMPLATE = _drive_template_to_unc(SHORT_TEMPLATE)
 
 

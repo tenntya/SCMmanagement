@@ -710,3 +710,32 @@ def _to_unc_if_possible(path: Path) -> Path:
     except Exception:
         pass
     return path
+
+# --- override: clean build_reschedule with correct Japanese headers ---
+def build_reschedule(df_if130: pd.DataFrame, today: date) -> Tuple[List[str], List[str], pd.DataFrame, str]:  # type: ignore[override]
+    max_idx = min(17, len(df_if130.columns))
+    view_df = df_if130.iloc[:, :max_idx].copy()
+    q_idx = col_letter_to_index("Q")
+    if q_idx < len(view_df.columns):
+        view_df = view_df[view_df.iloc[:, q_idx].astype(str).str.contains("前倒し", na=False)]
+    def _classify_a(x: str) -> str:
+        if not isinstance(x, str) or not x:
+            return ""
+        c = x[0].upper()
+        if c == "H": return "TRP"
+        if c == "W": return "SVF"
+        return ""
+    view_df = view_df.copy()
+    # R列=分類, S列=自由入力
+    view_df["分類"] = view_df.iloc[:, 0].astype(str).apply(_classify_a)
+    key_letter = "D"
+    d_idx = col_letter_to_index("D")
+    inputs = load_user_inputs().get("reschedule", {})
+    free = []
+    for _, row in view_df.iterrows():
+        key = str(row.iloc[d_idx]) if d_idx < len(row) else ""
+        free.append(inputs.get(key, {}).get("自由入力", ""))
+    view_df["自由入力"] = free
+    headers = list(view_df.columns)
+    letters = [index_to_col_letter(i) for i in range(len(headers))]
+    return headers, letters, view_df.reset_index(drop=True), key_letter

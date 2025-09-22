@@ -16,20 +16,15 @@
   function init() {
     qsa('.tab').forEach(b => b.addEventListener('click', () => setActiveTab(b.dataset.tab)));
     qs('#refreshBtn')?.addEventListener('click', () => loadData(state.tab));
-    // 本番/サンプル切替
     const prodTgl = qs('#prodToggle');
-    if (prodTgl) {
-      prodTgl.addEventListener('change', () => loadData(state.tab));
-    }
+    if (prodTgl) prodTgl.addEventListener('change', () => loadData(state.tab));
     qs('#prevPage')?.addEventListener('click', () => { if (state.page>1){ state.page--; renderTable(); }});
     qs('#nextPage')?.addEventListener('click', () => { const max = Math.max(1, Math.ceil(state.filtered.length/state.pageSize)); if (state.page<max){ state.page++; renderTable(); }});
     qsa('input[name="logic"]').forEach(el => el.addEventListener('change', () => { applyFilters(); renderTable(); }));
-    // Filter inputs（列テキスト・区分・日付）
     qsa('input[type="text"][data-col], select[data-col], input[type="date"][data-col]').forEach(el => {
       el.addEventListener('input', () => { applyFilters(); renderTable(); });
       el.addEventListener('change', () => { applyFilters(); renderTable(); });
     });
-    // 名称セレクト（各タブ）
     const nameSelects = [
       { id: '#hzNameSelect', tab: 'houchozan' },
       { id: '#tiNameSelect', tab: 'text_items' },
@@ -57,7 +52,7 @@
 
   async function loadData(tab) {
     try {
-      const prod = qs('#prodToggle')?.checked !== false; // 既定: 本番
+      const prod = qs('#prodToggle')?.checked !== false; // default prod
       const sample = prod ? 0 : 1;
       const res = await fetch(`/api/data/${tab}?sample=${sample}`);
       const data = await res.json();
@@ -86,82 +81,8 @@
       const col = el.dataset.col;
       const val = (el.value || '').trim();
       if (!val) return;
-      if (col === '区分') {
-        preds.push((r, headers) => {
-          const idx = headers.indexOf('区分');
-          return idx >= 0 && String(r[idx] || '').includes(val);
-        });
-        return;
-      }
-      if (col && col.length <= 3 && /^[A-Z]+$/.test(col)) {
-        const idx = letters.indexOf(col);
-        if (idx >= 0) preds.push((r) => String(r[idx] || '').includes(val));
-      }
-    });
-    // P列の日時範囲
-    const from = qs('input[data-col="P"][data-date="from"]', frow)?.value;
-    const to = qs('input[data-col="P"][data-date="to"]', frow)?.value;
-    if (from || to) {
-      const idx = letters.indexOf('P');
-      const fromD = from ? new Date(from) : null;
-      const toD = to ? new Date(to) : null;
-      preds.push((r) => {
-        if (idx < 0) return true;
-        const d = parseDateGuess2(r[idx]);
-        if (!d) return false;
-        if (fromD && d < fromD) return false;
-        if (toD && d > toD) return false;
-        return true;
-      });
-    }
-    // 名称テキストフィルタ（任意）
-    const nameVal = state.nameFilter[state.tab] || '';
-    const nameLetter = (state.datasets[state.tab] || {}).nameLetter || 'C';
-    if (nameVal) {
-      const idx2 = letters.indexOf(nameLetter);
-      if (idx2 >= 0) preds.push((r) => String(r[idx2] || '').includes(nameVal));
-    }
-    return preds;
-  }
-
-  function applyFilters() {
-    const ds = state.datasets[state.tab];
-    if (!ds) return;
-    const { headers, letters, rows } = ds;
-    const logic = qs('input[name="logic"]:checked')?.value || 'AND';
-    const filters = buildFilterPredicates2(ds);
-    let arr = rows.slice();
-    if (filters.length) {
-      arr = arr.filter(r => {
-        const checks = filters.map(fn => fn(r, headers, letters));
-        return logic === 'AND' ? checks.every(Boolean) : checks.some(Boolean);
-      });
-    }
-    state.filtered = arr;
-    state.page = 1;
-    if (state.sort.index >= 0) sortBy(state.sort.index, state.sort.dir);
-  }
-
-  // 新しいフィルタ構築（分類など非A-Z列にも対応）
-  function buildFilterPredicates2(ds) {
-    const frow = qs(`#filters-${state.tab}`);
-    const preds = [];
-    const letters = (ds && ds.letters) ? ds.letters : [];
-    qsa('input[type="text"][data-col], select[data-col]', frow).forEach(el => {
-      const col = el.dataset.col;
-      const val = (el.value || '').trim();
-      if (!val) return;
       if (col === '__kind__') {
-        // 品目コードはD列（なければC→B→Aの順でフォールバック）
-        let codeIdx = letters.indexOf('D');
-        if (codeIdx < 0) codeIdx = letters.indexOf('C');
-        if (codeIdx < 0) codeIdx = letters.indexOf('B');
-        if (codeIdx < 0) codeIdx = letters.indexOf('A');
-        preds.push((r) => {
-          const code = codeIdx >= 0 ? String(r[codeIdx] || '') : '';
-          const k = classifyKind(code);
-          return k === val;
-        });
+        // 品目種別は後段の専用ロジックで処理する
         return;
       }
       if (col && col.length <= 3 && /^[A-Z]+$/.test(col)) {
@@ -174,7 +95,7 @@
         return idx >= 0 && String(r[idx] || '').includes(val);
       });
     });
-    // 期日(P)の範囲
+    // P列の期間
     const from = qs('input[data-col="P"][data-date="from"]', frow)?.value;
     const to = qs('input[data-col="P"][data-date="to"]', frow)?.value;
     if (from || to) {
@@ -190,14 +111,43 @@
         return true;
       });
     }
-    // 名称テキストフィルタ
+    // 名称フィルタ
     const nameVal = state.nameFilter[state.tab] || '';
     const nameLetter = (state.datasets[state.tab] || {}).nameLetter || 'C';
     if (nameVal) {
       const idx2 = letters.indexOf(nameLetter);
       if (idx2 >= 0) preds.push((r) => String(r[idx2] || '').includes(nameVal));
     }
+    // 品目種別フィルタ (発注残のみ使用)
+    if (state.tab === 'houchozan') {
+      const kindSel = qs('select[data-col="__kind__"]', frow);
+      const kval = (kindSel?.value || '').trim();
+      if (kval) {
+        let codeIdx = letters.indexOf('D');
+        if (codeIdx < 0) codeIdx = letters.indexOf('C');
+        if (codeIdx < 0) codeIdx = letters.indexOf('B');
+        if (codeIdx < 0) codeIdx = letters.indexOf('A');
+        preds.push((r) => classifyKind(String(r[codeIdx] || '')) === kval);
+      }
+    }
     return preds;
+  }
+
+  function applyFilters() {
+    const ds = state.datasets[state.tab];
+    if (!ds) return;
+    const rows = ds.rows || [];
+    const headers = ds.headers || [];
+    const letters = ds.letters || [];
+    const preds = buildFilterPredicates(ds);
+    const useAnd = (qs('input[name="logic"]:checked')?.value || 'AND') === 'AND';
+    state.filtered = rows.filter(r => {
+      if (!preds.length) return true;
+      if (useAnd) return preds.every(p => p(r, headers, letters));
+      return preds.some(p => p(r, headers, letters));
+    });
+    state.page = 1;
+    state.sort = { index: -1, dir: 1 };
   }
 
   function headerIndex(headers, token) {
@@ -205,12 +155,7 @@
     if (!t) return -1;
     let idx = headers.indexOf(t);
     if (idx >= 0) return idx;
-    // 分類/区分の同義や文字化けに弱く一致
-    const candidates = ['分類','区分'];
-    for (const c of candidates) {
-      idx = headers.indexOf(c);
-      if (idx >= 0) return idx;
-    }
+    // 一部文字化けしても最短一致
     idx = headers.findIndex(h => String(h||'').includes(t));
     return idx;
   }
@@ -275,15 +220,15 @@
 
   function minWidthFor(header, idx, spec) {
     if (header === '自由入力' || header === '備考') return 240;
-    if (header === '区分') return 90;
-    if (header && header.includes('日数')) return 90;
+    if (header === '分類') return 90;
+    if (header && String(header).includes('日')) return 120;
     if (spec && spec.ints && spec.ints.has(idx)) return 90;
     if (spec && spec.dates && spec.dates.has(idx)) return 120;
     return 110;
   }
 
   function cellHtml(i, header, val, row, spec) {
-    const editTargets = { houchozan: '自由入力', text_items: '自由入力', short: '備考' };
+    const editTargets = { houchozan: '自由入力', text_items: '自由入力', short: '備考', reschedule: '自由入力' };
     const canEdit = header === editTargets[state.tab];
     if (canEdit) {
       const esc = (String(val || '')).replaceAll('&', '&amp;').replaceAll('<', '&lt;');
@@ -298,12 +243,10 @@
     const input = e.target;
     const ds = state.datasets[state.tab];
     if (!ds) return;
-    const idx = Number(input.dataset.idx);
-    const header = input.dataset.col;
     const keyIdx = (ds.letters || []).indexOf(ds.keyLetter || '');
     const row = state.filtered[(state.page - 1) * state.pageSize + Array.from(input.closest('tr').parentNode.children).indexOf(input.closest('tr'))];
     const key = keyIdx >= 0 ? String(row[keyIdx] || '') : '';
-    fetch('/api/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tab: state.tab, key, field: header, value: input.value || '' }) }).catch(()=>{});
+    fetch('/api/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tab: state.tab, key, field: input.dataset.col, value: input.value || '' }) }).catch(()=>{});
   }
 
   function sortBy(idx, dir) {
@@ -316,21 +259,13 @@
     const headers = ds.headers || [];
     const dates = new Set();
     const ints = new Set();
-    headers.forEach((h, i) => { if (h?.includes('日') || h?.match(/期|Date/i)) dates.add(i); });
+    headers.forEach((h, i) => { if (String(h||'').includes('日') || String(h||'').match(/Date/i)) dates.add(i); });
     return { dates, ints };
   }
 
   function buildWidthSpec(ds) {
     const headers = ds.headers || [];
     return headers.map((h,i)=>minWidthFor(h,i,{dates:new Set(),ints:new Set()}));
-  }
-
-  function parseDateGuess(s) {
-    const t = String(s||'').trim();
-    if (!t) return null;
-    const a = t.replace(/年|\//g,'-').replace(/月/g,'-').replace(/日/g,'');
-    const d = new Date(a);
-    return isNaN(d.getTime()) ? null : d;
   }
 
   function formatCell(i, header, val, spec) {
@@ -347,7 +282,7 @@
     return String(sx).localeCompare(String(sy), 'ja');
   }
 
-  // Robust date parser supporting YYYYMMDD, YYYY/MM/DD, YYYY-MM-DD, YYYY年M月D日
+  // Robust date parser supporting YYYYMMDD, YYYY/MM/DD, YYYY-MM-DD and Japanese date-like strings
   function parseDateGuess2(s) {
     const t = String(s||'').trim();
     if (!t) return null;
@@ -386,7 +321,7 @@
     const idx = letters.indexOf(nameLetter);
     if (idx < 0) { sel.innerHTML = ''; return; }
     const uniq = new Set((ds.rows || []).map(r => String(r[idx]||'')));
-    const options = ['<option value="">(すべて)</option>'].concat(Array.from(uniq).filter(Boolean).slice(0,2000).map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`));
+    const options = ['<option value="">(指定なし)</option>'].concat(Array.from(uniq).filter(Boolean).slice(0,2000).map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`));
     sel.innerHTML = options.join('');
     const cur = state.nameFilter[tab] || '';
     sel.value = cur;

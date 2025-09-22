@@ -23,4 +23,7 @@ pyinstaller --noconfirm --clean ^
 
 echo.
 echo [OK] Built dist\%NAME%.exe
+REM Copy external settings next to EXE so it can be edited without rebuild
+if exist pm_settings.ini copy /Y pm_settings.ini dist\pm_settings.ini >nul
+if exist pm_settings.json copy /Y pm_settings.json dist\pm_settings.json >nul
 endlocal
