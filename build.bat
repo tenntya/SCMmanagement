@@ -21,6 +21,13 @@ pyinstaller --noconfirm --clean ^
   --add-data "%STATIC%;procurement_manager/static" ^
   %SRC%
 
+REM copy external settings next to EXE
+if exist pm_settings.ini (
+  copy /Y pm_settings.ini dist\pm_settings.ini >nul
+) else if exist procurement_manager\example_pm_settings.ini (
+  copy /Y procurement_manager\example_pm_settings.ini dist\pm_settings.ini >nul
+)
+
 echo.
 echo [OK] Built dist\%NAME%.exe
 endlocal
