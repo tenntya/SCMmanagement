@@ -133,12 +133,7 @@ def find_latest_by_filename_date(search_dirs: List[Path], patterns: List[str]) -
 
 
 def resolve_if126_path(d: date, use_sample: bool) -> Optional[Path]:
-    # sample mode: find in sample dirs first
-    if use_sample:
-        p = find_latest_by_patterns(config.SAMPLE_SEARCH_DIRS, config.SAMPLE_IF126_PATTERNS)
-        if p and p.exists():
-            logger.info("IF126 sample resolved: %s", p)
-            return p
+    # サンプルモード廃止
     # 本番データ優先: 当日 → (月曜は前土曜) → ディレクトリ内の最新
     try_dates: List[date] = [d]
     if d.weekday() == 0:  # Monday
@@ -276,7 +271,7 @@ def read_short(paths: List[Path]) -> pd.DataFrame:
 
 # ---------- IF130 (再日程計画確認) ----------
 def resolve_if130_path(d: date, use_sample: bool) -> Optional[Path]:
-    if use_sample:
+    if False and use_sample:
         patterns = getattr(config, "SAMPLE_IF130_PATTERNS", ["NHSAPOTHIF130_*.txt"])
         p = find_latest_by_patterns(getattr(config, "SAMPLE_SEARCH_DIRS", [config.ROOT_DIR, config.ROOT_DIR.parent]), patterns)
         if p and p.exists():
@@ -632,7 +627,7 @@ def load_tab_data(tab: str, use_sample: bool = True, ref_date: Optional[date] = 
         return {"error": str(e)}
 
 
-def process_all_and_save(use_sample: bool = True, ref_date: Optional[date] = None) -> Dict[str, Path]:
+def process_all_and_save(use_sample: bool = False, ref_date: Optional[date] = None) -> Dict[str, Path]:
     # 日次バッチ用：加工済みJSONを保存
     ref_date = ref_date or today_date()
     outputs: Dict[str, Path] = {}

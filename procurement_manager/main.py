@@ -72,7 +72,7 @@ def create_app() -> Flask:
 
     @app.get("/api/data/<tab>")
     def api_data(tab: str):
-        use_sample = request.args.get("sample", "0") != "0"
+        use_sample = False
         # Special handling for reschedule to support older dp versions
         if tab == "reschedule":
             try:
@@ -98,7 +98,7 @@ def create_app() -> Flask:
                 return jsonify({"error": str(e)})
         data = dp.load_tab_data(tab, use_sample=use_sample)
         # 本番指定でエラー時はサンプルへ自動フォールバック
-        if (not use_sample) and isinstance(data, dict) and data.get("error"):
+        if False and (not use_sample) and isinstance(data, dict) and data.get("error"):
             try:
                 data2 = dp.load_tab_data(tab, use_sample=True)
                 if isinstance(data2, dict) and not data2.get("error"):
@@ -233,7 +233,7 @@ def main():
     setup_logging()
 
     if args.once:
-        outputs = dp.process_all_and_save(use_sample=not args.no_sample)
+        outputs = dp.process_all_and_save(use_sample=False)
         logging.getLogger(__name__).info("processed files: %s", outputs)
         return
 

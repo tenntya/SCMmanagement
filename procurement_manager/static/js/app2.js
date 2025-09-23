@@ -52,9 +52,8 @@
 
   async function loadData(tab) {
     try {
-      const prod = qs('#prodToggle')?.checked !== false; // default prod
-      const sample = prod ? 0 : 1;
-      const res = await fetch(`/api/data/${tab}?sample=${sample}`);
+      // サンプルモード廃止: 常に本番データ参照
+      const res = await fetch(`/api/data/${tab}`);
       const data = await res.json();
       if (data.error) return renderError(data.error);
       state.datasets[tab] = data;

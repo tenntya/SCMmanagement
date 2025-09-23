@@ -165,3 +165,8 @@ def _apply_overrides() -> None:
 
 
 _apply_overrides()
+
+# --- Disable sample mode globally (prefer UNC/prod only)
+SAMPLE_SEARCH_DIRS = []
+SAMPLE_IF126_PATTERNS = []
+SAMPLE_SHORT_PATTERNS = []
