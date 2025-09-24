@@ -8,6 +8,7 @@
     sort: { index: -1, dir: 1 },
     formatSpec: {},
     nameFilter: {},
+    filterCollapsed: {},
   };
 
   const qs = (sel, el=document) => el.querySelector(sel);
@@ -39,14 +40,56 @@
         });
       }
     });
+    // restore collapsed state
+    try { const saved = localStorage.getItem('filterCollapsed'); if (saved) state.filterCollapsed = JSON.parse(saved) || {}; } catch {}
+    setupFilterCards();
     setActiveTab('houchozan');
+  }
+
+  function setupFilterCards() {
+    qsa('.filter-card').forEach(card => {
+      const id = card.id || '';
+      const tab = id.replace(/^filters-card-/, '') || 'houchozan';
+      const title = qs('.card-title', card);
+      if (title && !qs('.chevron', title)) {
+        const chev = document.createElement('span');
+        chev.className = 'chevron';
+        chev.textContent = '▾';
+        title.appendChild(chev);
+      }
+      if (state.filterCollapsed[tab] === undefined) state.filterCollapsed[tab] = true; // default: collapsed
+      const applyCollapsed = () => {
+        const isCollapsed = !!state.filterCollapsed[tab];
+        card.classList.toggle('collapsed', isCollapsed);
+        const btn = qs('.toggle-filters', card);
+        if (btn) { btn.textContent = isCollapsed ? 'フィルターを表示' : 'フィルターを隠す'; btn.setAttribute('aria-expanded', String(!isCollapsed)); }
+      };
+      title?.addEventListener('click', () => {
+        state.filterCollapsed[tab] = !state.filterCollapsed[tab];
+        try { localStorage.setItem('filterCollapsed', JSON.stringify(state.filterCollapsed)); } catch {}
+        applyCollapsed();
+      });
+      // Optional: also support an injected button if present
+      qs('.toggle-filters', card)?.addEventListener('click', () => {
+        state.filterCollapsed[tab] = !state.filterCollapsed[tab];
+        try { localStorage.setItem('filterCollapsed', JSON.stringify(state.filterCollapsed)); } catch {}
+        applyCollapsed();
+      });
+      applyCollapsed();
+    });
   }
 
   function setActiveTab(tab) {
     state.tab = tab;
     qsa('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
     qsa('.filter-card').forEach(c => c.classList.add('hidden'));
-    qs(`#filters-card-${tab}`)?.classList.remove('hidden');
+    const card = qs(`#filters-card-${tab}`);
+    card?.classList.remove('hidden');
+    if (card) {
+      // reflect saved collapsed state for this tab
+      const isCollapsed = state.filterCollapsed[tab] === undefined ? true : !!state.filterCollapsed[tab];
+      card.classList.toggle('collapsed', isCollapsed);
+    }
     loadData(tab);
   }
 

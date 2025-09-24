@@ -98,13 +98,19 @@ body {
 }
 .filters { padding: 18px; margin: 12px 0 18px; }
 .filter-card { margin-bottom: 16px; }
-.card-title { font-weight: 600; color: var(--text); margin-bottom: 10px; display:flex; align-items:center; gap:8px; }
+.card-title { font-weight: 600; color: var(--text); margin-bottom: 10px; display:flex; align-items:center; gap:8px; cursor: pointer; user-select: none; }
+.chevron { margin-left: auto; transition: transform .2s ease; }
+.filter-card.collapsed .chevron { transform: rotate(-90deg); }
 .dot { width:10px; height:10px; border-radius:999px; display:inline-block; }
 .dot-accent { background: linear-gradient(180deg, var(--accent-2), #93c5fd); box-shadow: 0 0 0 2px rgba(30,58,138,.08); }
 
 /* 汎用: 非表示制御 */
 .hidden { display: none !important; }
 .filters-row { display: grid; grid-template-columns: repeat(5, minmax(260px, 1fr)); gap: 14px; }
+/* 折りたたみ時は条件行をまとめて隠す */
+.filter-card.collapsed .filters-row,
+.filter-card.collapsed .hz-names-row,
+.filter-card.collapsed .names-row { display: none; }
 /* 発注残は入力欄をややコンパクトに */
 #filters-houchozan { grid-template-columns: repeat(6, minmax(140px, 1fr)); }
 .hz-names-row { grid-template-columns: minmax(360px, 720px); margin-bottom: 8px; }
@@ -122,7 +128,8 @@ body {
 .hz-name { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: center; }
 
 .table-wrapper { margin: 0; padding: 0; overflow: hidden; }
-#table-container { overflow: auto; }
+/* テーブル内スクロールにして thead の sticky を安定させる */
+#table-container { overflow: auto; max-height: calc(100vh - 280px); }
 table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; border: 1px solid var(--grid); background: #fff; }
 th, td { padding: 10px 12px; font-size: 13px; border-right: 1px solid var(--grid); border-bottom: 1px solid var(--grid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
 th { position: sticky; top: 0; text-align: left; background: #f9fafb; z-index: 1; }
