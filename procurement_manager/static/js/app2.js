@@ -296,7 +296,8 @@
 
   function cellHtml(i, header, val, row, spec) {
     const editTargets = { houchozan: '自由入力', text_items: '自由入力', short: '備考', reschedule: '自由入力' };
-    const canEdit = header === editTargets[state.tab];
+    let canEdit = header === editTargets[state.tab];
+    if (state.tab === 'houchozan_today' && header === '自由入劁E') { canEdit = true; }
     if (canEdit) {
       const esc = (String(val || '')).replaceAll('&', '&amp;').replaceAll('<', '&lt;');
       return `<td><input class="edit-cell" type="text" value="${esc}" data-col="${header}" data-idx="${i}" /></td>`;

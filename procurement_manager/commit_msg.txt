@@ -1,0 +1,7 @@
+﻿feat(houchozan_today): add Today Orders tab & filters
+
+- BE: build_houchozan_today (P==today yyyymmdd+parsed), exclude 27th-col '検収'
+- BE: recalc delay days with today (avoid +1-day artifact)
+- API: /api/data/houchozan_today + save normalization to 'houchozan'
+- FE: dynamic tab, share filters with 'houchozan', clear filters on switch, guard null selectors
+- Logs: add counts to diagnose filtering
