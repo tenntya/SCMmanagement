@@ -517,6 +517,57 @@ def build_houchozan(df_if: pd.DataFrame, today: date) -> Tuple[List[str], List[s
     return list(view_df.columns), letters, view_df.reset_index(drop=True), key_letter
 
 
+def build_houchozan_today(df_if: pd.DataFrame, today: date) -> Tuple[List[str], List[str], pd.DataFrame, str]:
+    # 当日納期のみ対象: P列 == today
+    try:
+        logger.info("[houchozan_today] input rows=%s, cols=%s", len(df_if), len(df_if.columns))
+    except Exception:
+        pass
+    p_idx = col_letter_to_index("P")
+    if p_idx < len(df_if.columns):
+        colP = df_if.iloc[:, p_idx].astype(str)
+        # まず yyyymmdd 文字列での一致（非数字を除去して比較）
+        today_s = today.strftime("%Y%m%d")
+        colP_digits = colP.str.replace(r"\D", "", regex=True)
+        mask_digits = colP_digits == today_s
+        # 念のためパースして日付一致（万一 yyyymmdd 以外の表記が混在する場合）
+        due_series = colP.apply(parse_any_date)
+        mask_parsed = due_series.apply(lambda d: isinstance(d, date) and d == today)
+        before = len(df_if)
+        df_if = df_if[mask_digits | mask_parsed]
+        try:
+            logger.info("[houchozan_today] after P==today filter: %s -> %s (digits=%s, parsed=%s)", before, len(df_if), int(mask_digits.sum()), int(mask_parsed.sum()))
+        except Exception:
+            pass
+    # 27列目に「検収」を含むものを除外（0始まり index=26）
+    try:
+        idx27 = 26
+        if idx27 < len(df_if.columns):
+            before2 = len(df_if)
+            df_if = df_if[~df_if.iloc[:, idx27].astype(str).str.contains("検収", na=False)]
+            try:
+                logger.info("[houchozan_today] after exclude 検収 at col27: %s -> %s", before2, len(df_if))
+            except Exception:
+                pass
+    except Exception:
+        pass
+    # 表示・自由入力付与などは発注残のビルドを再利用（ただし期限判定の基準は当日を含めるため +1日）
+    headers, letters, view_df, key_letter = build_houchozan(df_if, today + timedelta(days=1))
+    # ただし遅延日数は「今日」基準で再計算して上書きする
+    base_cols = list(df_if.columns)
+    df2 = _add_delay_and_classification(df_if.copy(), classification_source_letter="D", today=today)
+    added_cols = [c for c in df2.columns if c not in base_cols]
+    # 遅延日数らしき列名を推定（日本語の「日」や「遅」または 'delay' を含む）
+    delay_candidates = [c for c in added_cols if any(k in str(c) for k in ("日", "遅", "delay", "Delay"))]
+    delay_col = delay_candidates[0] if delay_candidates else (added_cols[0] if added_cols else None)
+    if delay_col and delay_col in view_df.columns:
+        try:
+            view_df[delay_col] = list(df2[delay_col].values)
+        except Exception:
+            pass
+    return headers, letters, view_df.reset_index(drop=True), key_letter
+
+
 def build_text_items(df_if: pd.DataFrame, today: date) -> Tuple[List[str], List[str], pd.DataFrame, str]:
     # D列が空白のみ
     d_idx = col_letter_to_index("D")

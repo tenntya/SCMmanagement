@@ -10,7 +10,7 @@ from urllib import request as _urlreq, error as _urlerr
 
 from flask import Flask, jsonify, render_template, request
 
-# 直実行/モジュール実行の両対応
+# 直実衁Eモジュール実行�E両対忁E
 PKG_DIR = Path(__file__).resolve().parent
 REPO_DIR = PKG_DIR.parent
 if str(REPO_DIR) not in sys.path:
@@ -73,29 +73,6 @@ def create_app() -> Flask:
     @app.get("/api/data/<tab>")
     def api_data(tab: str):
         use_sample = False
-        # 当日発注残管理（発注残ベースの当日＋検収除外）
-        if tab == "houchozan_today":
-            try:
-                from datetime import date as _date
-                today = _date.today()
-                p = dp.resolve_if126_path(today, use_sample)
-                if not p:
-                    return jsonify({"error": "IF126チE�Eタが見つかりません"})
-                df = dp.read_if126(p)
-                headers, letters, view_df, key_letter = dp.build_houchozan_today(df, today)
-                rows = view_df.astype(str).fillna("").values.tolist()
-                src_dt = dp.extract_date_from_filename(p) or today
-                return jsonify({
-                    "headers": headers,
-                    "letters": letters,
-                    "rows": rows,
-                    "keyLetter": key_letter,
-                    "sourceDates": [src_dt.strftime("%Y/%m/%d")],
-                    "nameLetter": "C",
-                })
-            except Exception as e:
-                app.logger.exception("houchozan_today endpoint error: %s", e)
-                return jsonify({"error": str(e)})
         # Special handling for reschedule to support older dp versions
         if tab == "reschedule":
             try:
@@ -103,7 +80,7 @@ def create_app() -> Flask:
                 today = _date.today()
                 p = dp.resolve_if130_path(today, use_sample)
                 if not p:
-                    return jsonify({"error": "IF130データが見つかりません"})
+                    return jsonify({"error": "IF130チE�Eタが見つかりません"})
                 df = dp.read_if126(p)
                 headers, letters, view_df, key_letter = dp.build_reschedule(df, today)
                 rows = view_df.astype(str).fillna("").values.tolist()
@@ -120,7 +97,7 @@ def create_app() -> Flask:
                 app.logger.exception("reschedule endpoint error: %s", e)
                 return jsonify({"error": str(e)})
         data = dp.load_tab_data(tab, use_sample=use_sample)
-        # 本番指定でエラー時はサンプルへ自動フォールバック
+        # 本番持E��でエラー時�Eサンプルへ自動フォールバック
         if False and (not use_sample) and isinstance(data, dict) and data.get("error"):
             try:
                 data2 = dp.load_tab_data(tab, use_sample=True)
@@ -163,6 +140,7 @@ def create_app() -> Flask:
         if not key or not field:
             return jsonify({"ok": False, "error": "key/field required"}), 400
         try:
+            # 新タブ�E発注残と自由入力を共通化
             tab_norm = "houchozan" if tab == "houchozan_today" else tab
             dp.save_user_input(tab_norm, key, field, value)
             return jsonify({"ok": True})
@@ -217,7 +195,7 @@ def setup_logging():
 
 
 def _open_browser_when_ready(port: int) -> None:
-    # Debugのリローダで二重起動しないように制御
+    # Debugのリローダで二重起動しなぁE��ぁE��制御
     def _allow_open() -> bool:
         if getattr(config, "DEBUG", False):
             return os.environ.get("WERKZEUG_RUN_MAIN") == "true"
@@ -250,7 +228,7 @@ def _open_browser_when_ready(port: int) -> None:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=config.PORT)
-    parser.add_argument("--once", action="store_true", help="データ加工のみ実行し終了")
+    parser.add_argument("--once", action="store_true", help="チE�Eタ加工のみ実行し終亁E)
     parser.add_argument("--no-sample", action="store_true", help="サンプルではなく実データパスを使用")
     args = parser.parse_args()
 
@@ -263,10 +241,11 @@ def main():
 
     app = create_app()
     app.logger.info("Starting server on port %s", args.port)
-    # サーバのヘルス確認後に1回だけブラウザを開く
+    # サーバ�Eヘルス確認後に1回だけブラウザを開ぁE
     _open_browser_when_ready(args.port)
     app.run(host=getattr(config, "HOST", "0.0.0.0"), port=args.port, debug=config.DEBUG)
 
 
 if __name__ == "__main__":
     main()
+

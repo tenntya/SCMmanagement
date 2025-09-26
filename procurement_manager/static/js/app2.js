@@ -11,10 +11,20 @@
     filterCollapsed: {},
   };
 
-  const qs = (sel, el=document) => el.querySelector(sel);
-  const qsa = (sel, el=document) => Array.from(el.querySelectorAll(sel));
+  const qs = (sel, el) => (el ?? document).querySelector(sel);
+  const qsa = (sel, el) => Array.from((el ?? document).querySelectorAll(sel));
 
   function init() {
+    // 動的に「当日発注残管理」タブを追加
+    const tabsSeg = qs('.tabs-segmented');
+    const hzBtn = qs('.tab[data-tab="houchozan"]');
+    if (tabsSeg && hzBtn && !qs('.tab[data-tab="houchozan_today"]')) {
+      const btn = document.createElement('button');
+      btn.className = 'tab';
+      btn.dataset.tab = 'houchozan_today';
+      btn.textContent = '当日発注残管理';
+      hzBtn.after(btn);
+    }
     qsa('.tab').forEach(b => b.addEventListener('click', () => setActiveTab(b.dataset.tab)));
     qs('#refreshBtn')?.addEventListener('click', () => loadData(state.tab));
     const prodTgl = qs('#prodToggle');
@@ -28,6 +38,7 @@
     });
     const nameSelects = [
       { id: '#hzNameSelect', tab: 'houchozan' },
+      { id: '#hzNameSelect', tab: 'houchozan_today' },
       { id: '#tiNameSelect', tab: 'text_items' },
       { id: '#shortNameSelect', tab: 'short' },
     ];
@@ -83,12 +94,23 @@
     state.tab = tab;
     qsa('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
     qsa('.filter-card').forEach(c => c.classList.add('hidden'));
-    const card = qs(`#filters-card-${tab}`);
+    const tabForCard = (tab === 'houchozan_today') ? 'houchozan' : tab;
+    const card = qs(`#filters-card-${tabForCard}`);
     card?.classList.remove('hidden');
     if (card) {
       // reflect saved collapsed state for this tab
       const isCollapsed = state.filterCollapsed[tab] === undefined ? true : !!state.filterCollapsed[tab];
       card.classList.toggle('collapsed', isCollapsed);
+      // 当日発注残管理はフィルターを初期化（残留条件で絞り過ぎるのを防止）
+      if (tab === 'houchozan_today') {
+        qsa('input[type="text"][data-col], input[type="date"][data-col], select[data-col]', card).forEach(el => {
+          if (el.tagName === 'SELECT') { el.value = ''; }
+          else { el.value = ''; }
+        });
+        state.nameFilter[tab] = '';
+        const sel = qs('#hzNameSelect');
+        if (sel) sel.value = '';
+      }
     }
     loadData(tab);
   }
@@ -116,7 +138,10 @@
   }
 
   function buildFilterPredicates(ds) {
-    const frow = qs(`#filters-${state.tab}`);
+    let frow = qs(`#filters-${state.tab}`);
+    if (!frow && state.tab === 'houchozan_today') {
+      frow = qs('#filters-houchozan');
+    }
     const preds = [];
     const letters = (ds && ds.letters) ? ds.letters : [];
     qsa('input[type="text"][data-col], select[data-col]', frow).forEach(el => {
@@ -161,7 +186,7 @@
       if (idx2 >= 0) preds.push((r) => String(r[idx2] || '').includes(nameVal));
     }
     // 品目種別フィルタ (発注残のみ使用)
-    if (state.tab === 'houchozan') {
+    if (state.tab === 'houchozan' || state.tab === 'houchozan_today') {
       const kindSel = qs('select[data-col="__kind__"]', frow);
       const kval = (kindSel?.value || '').trim();
       if (kval) {
@@ -352,7 +377,7 @@
   }
 
   function renderNameOptions(tab) {
-    const selectId = tab === 'houchozan' ? '#hzNameSelect' : (tab === 'text_items' ? '#tiNameSelect' : (tab === 'short' ? '#shortNameSelect' : null));
+    const selectId = (tab === 'houchozan' || tab === 'houchozan_today') ? '#hzNameSelect' : (tab === 'text_items' ? '#tiNameSelect' : (tab === 'short' ? '#shortNameSelect' : null));
     if (!selectId) return;
     const sel = qs(selectId);
     if (!sel) return;
