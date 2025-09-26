@@ -1,0 +1,4 @@
+﻿fix(houchozan_today): enable editing of free-text column on Today tab
+
+- FE: treat '自由入力' as editable for houchozan_today, matching houchozan
+- Save API already normalizes to 'houchozan'

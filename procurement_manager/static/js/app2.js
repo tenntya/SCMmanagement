@@ -406,5 +406,24 @@
     return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
   }
 
+  // 上書き: 自由入力/備考カラムは判定をヘッダの語で行い、
+  // houchozan_today でも編集可能にする
+  function cellHtml(i, header, val, row, spec) {
+    const h = String(header || '');
+    let editable = false;
+    if (state.tab === 'short') {
+      editable = h.includes('備');
+    } else if (state.tab === 'houchozan' || state.tab === 'houchozan_today' || state.tab === 'text_items' || state.tab === 'reschedule') {
+      editable = h.includes('自由');
+    }
+    if (editable) {
+      const esc = (String(val || '')).replaceAll('&', '&amp;').replaceAll('<', '&lt;');
+      return `<td><input class="edit-cell" type="text" value="${esc}" data-col="${header}" data-idx="${i}" /></td>`;
+    }
+    const display = formatCell(i, header, val, spec);
+    const title = String(val ?? '');
+    return `<td title="${escapeHtml(title)}">${display}</td>`;
+  }
+
   document.addEventListener('DOMContentLoaded', init);
 })();
