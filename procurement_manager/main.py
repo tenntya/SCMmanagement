@@ -8,7 +8,12 @@ from pathlib import Path
 import sys
 from urllib import request as _urlreq, error as _urlerr
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, redirect, url_for
+from typing import Dict, Tuple
+
+# Simple in-process cache for API payloads
+_DATA_CACHE: Dict[str, Tuple[float, dict]] = {}
+_CACHE_TTL_SEC = 120.0
 
 # 直実行/モジュール実行の両対応
 PKG_DIR = Path(__file__).resolve().parent
@@ -70,10 +75,25 @@ def create_app() -> Flask:
     def index():
         return render_template("index.html")
 
+    @app.get("/favicon.ico")
+    def favicon():
+        try:
+            return redirect(url_for('static', filename='favicon.svg'), code=302)
+        except Exception:
+            return ("", 204)
+
     @app.get("/api/data/<tab>")
     def api_data(tab: str):
         use_sample = False
-        # 当日発注残管理（発注残ベースの当日＋検収除外）
+        # caching control
+        force = (request.args.get("force") or "").lower() in ("1", "true", "yes")
+        now = time.time()
+        ck = f"{tab}|{int(use_sample)}"
+        if not force:
+            cached = _DATA_CACHE.get(ck)
+            if cached and (now - cached[0] < _CACHE_TTL_SEC):
+                return jsonify(cached[1])
+        # 当日検収確認（発注残ベースの当日＋検収除外）
         if tab == "houchozan_today":
             try:
                 from datetime import date as _date
@@ -85,14 +105,16 @@ def create_app() -> Flask:
                 headers, letters, view_df, key_letter = dp.build_houchozan_today(df, today)
                 rows = view_df.astype(str).fillna("").values.tolist()
                 src_dt = dp.extract_date_from_filename(p) or today
-                return jsonify({
+                data_obj = {
                     "headers": headers,
                     "letters": letters,
                     "rows": rows,
                     "keyLetter": key_letter,
                     "sourceDates": [src_dt.strftime("%Y/%m/%d")],
                     "nameLetter": "C",
-                })
+                }
+                _DATA_CACHE[ck] = (now, data_obj)
+                return jsonify(data_obj)
             except Exception as e:
                 app.logger.exception("houchozan_today endpoint error: %s", e)
                 return jsonify({"error": str(e)})
@@ -108,18 +130,23 @@ def create_app() -> Flask:
                 headers, letters, view_df, key_letter = dp.build_reschedule(df, today)
                 rows = view_df.astype(str).fillna("").values.tolist()
                 src_dt = dp.extract_date_from_filename(p) or today
-                return jsonify({
+                data_obj = {
                     "headers": headers,
                     "letters": letters,
                     "rows": rows,
                     "keyLetter": key_letter,
                     "sourceDates": [src_dt.strftime("%Y/%m/%d")],
                     "nameLetter": "C" if "C" in letters else (letters[0] if letters else "A"),
-                })
+                }
+                _DATA_CACHE[ck] = (now, data_obj)
+                return jsonify(data_obj)
             except Exception as e:
                 app.logger.exception("reschedule endpoint error: %s", e)
                 return jsonify({"error": str(e)})
         data = dp.load_tab_data(tab, use_sample=use_sample)
+        # store successful payloads in cache early (fallback block below is disabled)
+        if isinstance(data, dict) and not data.get("error"):
+            _DATA_CACHE[ck] = (now, data)
         # 本番指定でエラー時はサンプルへ自動フォールバック
         if False and (not use_sample) and isinstance(data, dict) and data.get("error"):
             try:
@@ -170,6 +197,23 @@ def create_app() -> Flask:
             app.logger.exception("保存エラー: %s", e)
             return jsonify({"ok": False, "error": str(e)}), 500
 
+    @app.post("/api/quit")
+    def api_quit():
+        allow = bool(getattr(app, "_allow_browser_quit", False) or (os.getenv("PM_ALLOW_BROWSER_QUIT", "").lower() in ("1","true","yes")))
+        if not allow:
+            return jsonify({"ok": False, "error": "quit disabled"}), 403
+        def _stop():
+            try:
+                func = request.environ.get('werkzeug.server.shutdown')
+                if func:
+                    func()
+                    return
+            except Exception:
+                pass
+            os._exit(0)
+        threading.Timer(0.2, _stop).start()
+        return jsonify({"ok": True})
+
     @app.get("/api/houchozan/name")
     def api_hz_name_get():
         try:
@@ -216,12 +260,23 @@ def setup_logging():
         pass
 
 
-def _open_browser_when_ready(port: int) -> None:
+_BROWSER_OPENED = False
+
+def _open_browser_when_ready(port: int, no_browser: bool = False) -> None:
     # Debugのリローダで二重起動しないように制御
     def _allow_open() -> bool:
         if getattr(config, "DEBUG", False):
             return os.environ.get("WERKZEUG_RUN_MAIN") == "true"
         return True
+
+    # allow disable via CLI or env
+    if no_browser or (os.getenv("PM_NO_BROWSER", "").lower() in ("1","true","yes")):
+        return
+
+    # Prevent multiple opens in single process
+    global _BROWSER_OPENED
+    if _BROWSER_OPENED:
+        return
 
     if not _allow_open():
         return
@@ -240,10 +295,11 @@ def _open_browser_when_ready(port: int) -> None:
             except Exception:
                 time.sleep(0.4)
         try:
-            webbrowser.open_new(base)
+            webbrowser.open_new(base + "?launched=1")
         except Exception:
             pass
 
+    _BROWSER_OPENED = True
     threading.Thread(target=_worker, daemon=True).start()
 
 
@@ -252,6 +308,7 @@ def main():
     parser.add_argument("--port", type=int, default=config.PORT)
     parser.add_argument("--once", action="store_true", help="データ加工のみ実行し終了")
     parser.add_argument("--no-sample", action="store_true", help="サンプルではなく実データパスを使用")
+    parser.add_argument("--no-browser", action="store_true", help="ブラウザ自動起動を無効化")
     args = parser.parse_args()
 
     setup_logging()
@@ -264,7 +321,7 @@ def main():
     app = create_app()
     app.logger.info("Starting server on port %s", args.port)
     # サーバのヘルス確認後に1回だけブラウザを開く
-    _open_browser_when_ready(args.port)
+    _open_browser_when_ready(args.port, no_browser=args.no_browser)
     app.run(host=getattr(config, "HOST", "0.0.0.0"), port=args.port, debug=config.DEBUG)
 
 

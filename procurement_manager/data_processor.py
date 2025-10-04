@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import datetime, timedelta, date
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import os
 import ctypes
 from ctypes import wintypes
@@ -15,6 +15,12 @@ from . import config
 
 
 logger = logging.getLogger(__name__)
+
+
+_CACHE_VERSION = 2
+
+EXCLUDED_SUPPLIER_CODES = {"NVAA294825", "NVAA351706", "NVAA280167"}
+_SUPPLIER_CODE_LETTER = "B"
 
 
 # ---------- 日付/列ユーティリティ ----------
@@ -132,7 +138,104 @@ def find_latest_by_filename_date(search_dirs: List[Path], patterns: List[str]) -
     return best[2] if best else None
 
 
+
+def _cache_path(tab: str, mode: str, ref_date: date) -> Path:
+    safe_tab = tab.replace('/', '_')
+    stamp = ref_date.strftime('%Y%m%d')
+    return config.PROCESSED_DIR / f"{safe_tab}_{mode}_{stamp}.cache.json"
+
+
+def _source_info_for(path: Path) -> Tuple[str, float, int]:
+    try:
+        stat = path.stat()
+        return str(path), float(stat.st_mtime), int(stat.st_size)
+    except Exception:
+        return str(path), 0.0, 0
+
+
+def _normalize_sources(sources: List[Tuple[str, float, int]]) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    for p, mtime, size in sources:
+        items.append({'path': str(p), 'mtime': round(float(mtime), 6), 'size': int(size)})
+    items.sort(key=lambda x: x['path'])
+    return items
+
+
+def _load_cached_payload(tab: str, mode: str, ref_date: date, sources: List[Tuple[str, float, int]]) -> Optional[Dict]:
+    path = _cache_path(tab, mode, ref_date)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        return None
+    if data.get('version') != _CACHE_VERSION:
+        return None
+    cached_sources = data.get('sources')
+    if not isinstance(cached_sources, list):
+        return None
+    if _normalize_sources(sources) != cached_sources:
+        return None
+    payload = data.get('payload')
+    return payload if isinstance(payload, dict) else None
+
+
+def _save_cached_payload(tab: str, mode: str, ref_date: date, sources: List[Tuple[str, float, int]], payload: Dict) -> None:
+    if not isinstance(payload, dict):
+        return
+    path = _cache_path(tab, mode, ref_date)
+    tmp = None
+    try:
+        tmp = path.with_suffix('.tmp')
+        data = {
+            'version': _CACHE_VERSION,
+            'sources': _normalize_sources(sources),
+            'payload': payload,
+        }
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+        tmp.replace(path)
+    except Exception:
+        if tmp and tmp.exists():
+            try:
+                tmp.unlink()
+            except Exception:
+                pass
+
+
+def _filter_excluded_suppliers(df: pd.DataFrame) -> pd.DataFrame:
+    if not EXCLUDED_SUPPLIER_CODES:
+        return df
+    idx = col_letter_to_index(_SUPPLIER_CODE_LETTER)
+    if idx >= len(df.columns):
+        return df
+    series = df.iloc[:, idx].astype(str).str.strip()
+    mask = ~series.isin(EXCLUDED_SUPPLIER_CODES)
+    if mask.all():
+        return df
+    filtered = df[mask].copy()
+    try:
+        logger.info('filter suppliers: removed %s rows', int((~mask).sum()))
+    except Exception:
+        pass
+    return filtered
+
+
 def resolve_if126_path(d: date, use_sample: bool) -> Optional[Path]:
+    # Fast path: check recent dates before directory scan
+    try:
+        try_dates: List[date] = [d]
+        if d.weekday() == 0:
+            try_dates.append(d - timedelta(days=2))
+        for i in range(1, 7):
+            try_dates.append(d - timedelta(days=i))
+        tmpl = os.getenv('PM_IF126_TEMPLATE', getattr(config, 'IF126_TEMPLATE', r'K:\PW_Tableau\IF126_納入日程管理\NHSAPOTHIF126_{yyyymmdd}.txt'))
+        for dd in try_dates:
+            target_path = _to_unc_if_possible(Path(str(tmpl).format(yyyymmdd=yyyymmdd(dd))))
+            if target_path.exists():
+                logger.info('IF126 fast path resolved: %s', target_path)
+                return target_path
+    except Exception:
+        pass
     # サンプルモード廃止
     # 本番データ優先: 当日 → (月曜は前土曜) → ディレクトリ内の最新
     try_dates: List[date] = [d]
@@ -491,6 +594,7 @@ def _add_delay_and_classification(df: pd.DataFrame, classification_source_letter
 
 
 def build_houchozan(df_if: pd.DataFrame, today: date) -> Tuple[List[str], List[str], pd.DataFrame, str]:
+    df_if = _filter_excluded_suppliers(df_if)
     # 期限切れ: P列 < today
     p_idx = col_letter_to_index("P")
     if p_idx < len(df_if.columns):
@@ -518,7 +622,8 @@ def build_houchozan(df_if: pd.DataFrame, today: date) -> Tuple[List[str], List[s
 
 
 def build_houchozan_today(df_if: pd.DataFrame, today: date) -> Tuple[List[str], List[str], pd.DataFrame, str]:
-    # 当日納期のみ対象: P列 == today
+    df_if = _filter_excluded_suppliers(df_if)
+    # 当日納期までを対象: P列 <= today
     try:
         logger.info("[houchozan_today] input rows=%s, cols=%s", len(df_if), len(df_if.columns))
     except Exception:
@@ -526,17 +631,15 @@ def build_houchozan_today(df_if: pd.DataFrame, today: date) -> Tuple[List[str], 
     p_idx = col_letter_to_index("P")
     if p_idx < len(df_if.columns):
         colP = df_if.iloc[:, p_idx].astype(str)
-        # まず yyyymmdd 文字列での一致（非数字を除去して比較）
         today_s = today.strftime("%Y%m%d")
         colP_digits = colP.str.replace(r"\D", "", regex=True)
-        mask_digits = colP_digits == today_s
-        # 念のためパースして日付一致（万一 yyyymmdd 以外の表記が混在する場合）
+        mask_digits = colP_digits.apply(lambda s: bool(s) and len(s) == 8 and s <= today_s)
         due_series = colP.apply(parse_any_date)
-        mask_parsed = due_series.apply(lambda d: isinstance(d, date) and d == today)
+        mask_parsed = due_series.apply(lambda d: isinstance(d, date) and d <= today)
         before = len(df_if)
         df_if = df_if[mask_digits | mask_parsed]
         try:
-            logger.info("[houchozan_today] after P==today filter: %s -> %s (digits=%s, parsed=%s)", before, len(df_if), int(mask_digits.sum()), int(mask_parsed.sum()))
+            logger.info("[houchozan_today] after P<=today filter: %s -> %s", before, len(df_if))
         except Exception:
             pass
     # 27列目に「検収」を含むものを除外（0始まり index=26）
@@ -569,6 +672,7 @@ def build_houchozan_today(df_if: pd.DataFrame, today: date) -> Tuple[List[str], 
 
 
 def build_text_items(df_if: pd.DataFrame, today: date) -> Tuple[List[str], List[str], pd.DataFrame, str]:
+    df_if = _filter_excluded_suppliers(df_if)
     # D列が空白のみ
     d_idx = col_letter_to_index("D")
     if d_idx < len(df_if.columns):
@@ -621,16 +725,20 @@ def build_short(df_short: pd.DataFrame, today: date) -> Tuple[List[str], List[st
 
 
 def load_tab_data(tab: str, use_sample: bool = True, ref_date: Optional[date] = None) -> Dict:
-    # 呼び出し元の use_sample 指定を尊重し、既定は引数デフォルトに従う
     ref_date = ref_date or today_date()
+    mode = "sample" if use_sample else "prod"
+    sources_info: List[Tuple[str, float, int]] = []
 
     try:
         if tab in ("houchozan", "text_items"):
             p = resolve_if126_path(ref_date, use_sample)
             if not p:
                 raise FileNotFoundError("IF126データが見つかりません")
+            sources_info = [_source_info_for(p)]
+            cached = _load_cached_payload(tab, mode, ref_date, sources_info)
+            if cached:
+                return cached
             df = read_if126(p)
-            # 取得日
             src_dt = extract_date_from_filename(p) or ref_date
             if tab == "houchozan":
                 headers, letters, view_df, key_letter = build_houchozan(df, ref_date)
@@ -640,15 +748,17 @@ def load_tab_data(tab: str, use_sample: bool = True, ref_date: Optional[date] = 
             ps = resolve_short_paths(ref_date, use_sample)
             if not ps:
                 raise FileNotFoundError("短納期CSVが見つかりません")
+            sources_info = [_source_info_for(pp) for pp in ps]
+            cached = _load_cached_payload(tab, mode, ref_date, sources_info)
+            if cached:
+                return cached
             df = read_short(ps)
             headers, letters, view_df, key_letter = build_short(df, ref_date)
-            # 取得日（ファイル名から抽出）
             src_dates = []
             for pp in ps:
                 dt = extract_date_from_filename(pp)
                 if dt:
                     src_dates.append(dt)
-            # fallback: 月曜ロジック
             if not src_dates:
                 src_dates = monday_with_prev_saturday(ref_date)
         else:
@@ -661,20 +771,18 @@ def load_tab_data(tab: str, use_sample: bool = True, ref_date: Optional[date] = 
             "rows": rows,
             "keyLetter": key_letter,
         }
-        # 日付情報を付与
         if tab in ("houchozan", "text_items"):
             result["sourceDates"] = [src_dt.strftime("%Y/%m/%d")]
-            # 名称の列（C列）を明示
             result["nameLetter"] = "C"
         elif tab == "short":
-            # 重複排除して昇順
             uniq = sorted({d.strftime("%Y/%m/%d") for d in src_dates})
             result["sourceDates"] = uniq
-            # 短納期の名称候補（C列を優先。なければB列）
             result["nameLetter"] = "C" if "C" in letters else ("B" if "B" in letters else letters[0] if letters else "A")
+
+        _save_cached_payload(tab, mode, ref_date, sources_info, result)
         return result
     except Exception as e:
-        logger.exception("データ生成エラー: %s", e)
+        logger.exception("データ読込エラー: %s", e)
         return {"error": str(e)}
 
 

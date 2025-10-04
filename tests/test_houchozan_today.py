@@ -30,7 +30,7 @@ def test_houchozan_today_includes_today_and_past_only():
     assert len(h_df) == 1
     assert any(str(today - timedelta(days=1)) in str(v) for v in h_df.values.flatten())
 
-    # 当日発注残確認: up to and including today
+    # 当日検収確認: up to and including today
     t_cols, t_letters, t_df, _ = dp.build_houchozan_today(df.copy(), today)
     assert len(t_df) == 2
     # should include yesterday and today, but not tomorrow

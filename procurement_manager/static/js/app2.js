@@ -9,26 +9,104 @@
     formatSpec: {},
     nameFilter: {},
     filterCollapsed: {},
+    baseWidths: {},
+    columnWidths: {},
   };
 
   const qs = (sel, el) => (el ?? document).querySelector(sel);
   const qsa = (sel, el) => Array.from((el ?? document).querySelectorAll(sel));
 
+  const WIDTH_STORAGE_KEY = 'pmTableWidths:v1';
+  const DEFAULT_MIN_WIDTH = 96;
+  const MAX_COL_WIDTH = 720;
+  const HEADER_FONT = '600 13px "Segoe UI", "Noto Sans JP", sans-serif';
+  const CELL_FONT = '13px "Segoe UI", "Noto Sans JP", sans-serif';
+  const MAX_SAMPLE_ROWS = 200;
+  let measureCtx = null;
+
+  function getMeasureContext(font) {
+    if (!measureCtx) {
+      const canvas = document.createElement('canvas');
+      measureCtx = canvas.getContext('2d');
+    }
+    if (!measureCtx) return null;
+    if (font) measureCtx.font = font;
+    return measureCtx;
+  }
+
+  function measureTextWidth(text, font) {
+    const ctx = getMeasureContext(font || CELL_FONT);
+    if (!ctx) return String(text ?? '').length * 14;
+    if (font) ctx.font = font;
+    const lines = String(text ?? '').split(/\r?\n/);
+    let max = 0;
+    for (const line of lines) {
+      const metrics = ctx.measureText(line || ' ');
+      max = Math.max(max, metrics.width);
+    }
+    return max;
+  }
+
+  function clampWidth(px) {
+    if (!Number.isFinite(px)) return DEFAULT_MIN_WIDTH;
+    return Math.min(MAX_COL_WIDTH, Math.max(DEFAULT_MIN_WIDTH, Math.ceil(px)));
+  }
+
+
+  // One-shot force flag for API data reload
+  try {
+    const _origFetch = window.fetch.bind(window);
+    window.fetch = (url, opts) => {
+      try {
+        if (window._pmForceOnce && typeof url === 'string' && url.startsWith('/api/data/')) {
+          const sep = url.includes('?') ? '&' : '?';
+          url = url + sep + 'force=1';
+          window._pmForceOnce = false;
+        }
+      } catch {}
+      return _origFetch(url, opts);
+    };
+  } catch {}
+
   function init() {
-    // 動的に「当日発注残管理」タブを追加
+    try {
+      const saved = localStorage.getItem(WIDTH_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') state.columnWidths = parsed;
+      }
+    } catch {}
+    // If launched by the app, enable auto-quit on window close
+    try {
+      const usp = new URLSearchParams(location.search);
+      if (usp.get('launched') === '1') {
+        window._pmAutoQuit = true;
+        let sent = false;
+        const tryQuit = () => {
+          if (!window._pmAutoQuit || sent) return;
+          sent = true;
+          try { navigator.sendBeacon('/api/quit', 'bye'); } catch {}
+        };
+        window.addEventListener('pagehide', tryQuit);
+        window.addEventListener('beforeunload', tryQuit);
+      }
+    } catch {}
+    // 動的に「当日検収確認」タブを追加
     const tabsSeg = qs('.tabs-segmented');
     const hzBtn = qs('.tab[data-tab="houchozan"]');
     if (tabsSeg && hzBtn && !qs('.tab[data-tab="houchozan_today"]')) {
       const btn = document.createElement('button');
       btn.className = 'tab';
       btn.dataset.tab = 'houchozan_today';
-      btn.textContent = '当日発注残管理';
+      btn.textContent = '当日検収確認';
       hzBtn.after(btn);
     }
     qsa('.tab').forEach(b => b.addEventListener('click', () => setActiveTab(b.dataset.tab)));
-    qs('#refreshBtn')?.addEventListener('click', () => loadData(state.tab));
+    qs('#refreshBtn')?.addEventListener('click', () => { window._pmForceOnce = true; loadData(state.tab); });
+    qs('#tableAutoFit')?.addEventListener('click', () => autoFitActiveTab());
+    qs('#tableResetWidths')?.addEventListener('click', () => { resetColumnWidths(state.tab); renderTable(); });
     const prodTgl = qs('#prodToggle');
-    if (prodTgl) prodTgl.addEventListener('change', () => loadData(state.tab));
+    if (prodTgl) prodTgl.addEventListener('change', () => { window._pmForceOnce = true; loadData(state.tab); });
     qs('#prevPage')?.addEventListener('click', () => { if (state.page>1){ state.page--; renderTable(); }});
     qs('#nextPage')?.addEventListener('click', () => { const max = Math.max(1, Math.ceil(state.filtered.length/state.pageSize)); if (state.page<max){ state.page++; renderTable(); }});
     qsa('input[name="logic"]').forEach(el => el.addEventListener('change', () => { applyFilters(); renderTable(); }));
@@ -101,7 +179,7 @@
       // reflect saved collapsed state for this tab
       const isCollapsed = state.filterCollapsed[tab] === undefined ? true : !!state.filterCollapsed[tab];
       card.classList.toggle('collapsed', isCollapsed);
-      // 当日発注残管理はフィルターを初期化（残留条件で絞り過ぎるのを防止）
+      // 当日検収確認はフィルターを初期化（残留条件で絞り過ぎるのを防止）
       if (tab === 'houchozan_today') {
         qsa('input[type="text"][data-col], input[type="date"][data-col], select[data-col]', card).forEach(el => {
           if (el.tagName === 'SELECT') { el.value = ''; }
@@ -112,18 +190,34 @@
         if (sel) sel.value = '';
       }
     }
-    loadData(tab);
+    // Avoid re-fetching on every tab switch if cached
+    if (state.datasets[tab]) {
+      applyFilters();
+      renderTable();
+      renderDates();
+      renderNameOptions(tab);
+    } else {
+      loadData(tab);
+    }
   }
 
   async function loadData(tab) {
     try {
       // サンプルモード廃止: 常に本番データ参照
       const res = await fetch(`/api/data/${tab}`);
+      if (!res.ok) {
+        try { console.error('API load failed', tab, res.status, res.url); } catch {}
+        renderError(`HTTP ${res.status} で取得に失敗: ${res.url || ('/api/data/' + tab)}`);
+        return;
+      }
       const data = await res.json();
       if (data.error) return renderError(data.error);
       state.datasets[tab] = data;
-      state.formatSpec[tab] = buildFormatSpec(data, tab);
-      state.widthSpec = buildWidthSpec(data, tab);
+      const spec = buildFormatSpec(data, tab);
+      state.formatSpec[tab] = spec;
+      state.baseWidths[tab] = buildWidthSpec(data, spec);
+      alignColumnWidths(tab, data.headers || [], spec);
+      persistColumnWidths();
       applyFilters();
       renderTable();
       renderDates();
@@ -245,56 +339,30 @@
     const pageRows = state.filtered.slice(start, end);
     const ths = headers.map((h, i) => `<th class="sortable" data-idx="${i}">${h}</th>`).join('');
     const rowsHtml = pageRows.map(r => `<tr>${r.map((v, i) => cellHtml(i, headers[i], v, r, spec)).join('')}</tr>`).join('');
-    const baseWidths = (state.widthSpec || []).slice();
-    const avail = Math.max(0, cont.clientWidth || cont.getBoundingClientRect().width || 0);
-    const finalWidths = shrinkToFit(baseWidths, headers, spec, avail);
-    const colgroup = finalWidths.map(w => `<col style="width:${w}px">`).join('');
-    cont.innerHTML = `<table><colgroup>${colgroup}</colgroup><thead><tr>${ths}</tr></thead><tbody>${rowsHtml}</tbody></table>`;
+    const widths = getColumnWidths(headers, spec);
+    const colgroup = widths.map(w => `<col style="width:${w}px">`).join('');
+    const totalWidth = widths.reduce((sum, w) => sum + w, 0);
+    const targetWidth = Math.max(totalWidth, cont.clientWidth || 0);
+    cont.innerHTML = `<table style="min-width:100%; width:${targetWidth}px"><colgroup>${colgroup}</colgroup><thead><tr>${ths}</tr></thead><tbody>${rowsHtml}</tbody></table>`;
+    const tableEl = qs('table', cont);
+    setupColumnResizers(tableEl, widths, headers, spec);
     qsa('th.sortable', cont).forEach(th => th.addEventListener('click', () => { const idx = Number(th.dataset.idx); const dir = state.sort.index === idx ? -state.sort.dir : 1; sortBy(idx, dir); renderTable(); }));
     qs('#pageInfo').textContent = `${state.page} / ${Math.max(1, Math.ceil(state.filtered.length / state.pageSize))} (${state.filtered.length}件)`;
     cont.querySelectorAll('input.edit-cell')?.forEach(input => input.addEventListener('change', onEditChange));
   }
 
-  function shrinkToFit(widths, headers, spec, avail) {
-    if (!widths || !widths.length || !avail) return widths || [];
-    const total = widths.reduce((a,b)=>a+b,0);
-    if (total === 0) return widths;
-    if (total > avail) {
-      const mins = widths.map((w, i) => minWidthFor(headers[i], i, spec));
-      const ratio = avail / total;
-      let w2 = widths.map((w, i) => Math.max(mins[i], Math.floor(w * ratio)));
-      let sum = w2.reduce((a,b)=>a+b,0);
-      if (sum <= avail) return w2;
-      let guard = 0;
-      while (sum > avail && guard < 8) {
-        guard++;
-        const over = sum - avail;
-        const flexes = w2.map((w, i) => Math.max(0, w - mins[i]));
-        const flexTotal = flexes.reduce((a,b)=>a+b,0);
-        if (flexTotal <= 0) break;
-        w2 = w2.map((w, i) => { if (flexes[i] <= 0) return w; const dec = Math.floor(over * (flexes[i] / flexTotal)); return Math.max(mins[i], w - dec); });
-        sum = w2.reduce((a,b)=>a+b,0);
-      }
-      return w2;
-    }
-    const ratio = avail / total;
-    let grown = widths.map(w => Math.floor(w * ratio));
-    let diff = avail - grown.reduce((a,b)=>a+b,0);
-    let i = 0;
-    while (diff > 0 && i < grown.length) { grown[i] += 1; diff -= 1; i += 1; }
-    return grown;
+    function minWidthFor(header, idx, spec) {
+    const h = String(header || '');
+    if (!h) return DEFAULT_MIN_WIDTH;
+    if (h.includes('自由') || h.includes('備考') || h.includes('メモ')) return 240;
+    if (h.includes('名称')) return 150;
+    if (spec && spec.ints && spec.ints.has(idx)) return Math.max(DEFAULT_MIN_WIDTH, 90);
+    if (spec && spec.dates && spec.dates.has(idx)) return Math.max(DEFAULT_MIN_WIDTH, 120);
+    if (h.includes('日')) return Math.max(DEFAULT_MIN_WIDTH, 120);
+    return Math.max(DEFAULT_MIN_WIDTH, 110);
   }
 
-  function minWidthFor(header, idx, spec) {
-    if (header === '自由入力' || header === '備考') return 240;
-    if (header === '分類') return 90;
-    if (header && String(header).includes('日')) return 120;
-    if (spec && spec.ints && spec.ints.has(idx)) return 90;
-    if (spec && spec.dates && spec.dates.has(idx)) return 120;
-    return 110;
-  }
-
-  function cellHtml(i, header, val, row, spec) {
+function cellHtml(i, header, val, row, spec) {
     const editTargets = { houchozan: '自由入力', text_items: '自由入力', short: '備考', reschedule: '自由入力' };
     let canEdit = header === editTargets[state.tab];
     if (state.tab === 'houchozan_today' && header === '自由入劁E') { canEdit = true; }
@@ -331,10 +399,153 @@
     return { dates, ints };
   }
 
-  function buildWidthSpec(ds) {
+  function buildWidthSpec(ds, spec, sampleRows) {
     const headers = ds.headers || [];
-    return headers.map((h,i)=>minWidthFor(h,i,{dates:new Set(),ints:new Set()}));
+    const rows = Array.isArray(sampleRows) && sampleRows.length ? sampleRows : (ds.rows || []);
+    const defaultSpec = spec || { dates: new Set(), ints: new Set() };
+    const sample = rows.slice(0, MAX_SAMPLE_ROWS);
+    return headers.map((h, idx) => {
+      const headerWidth = measureTextWidth(h, HEADER_FONT);
+      let maxWidth = headerWidth;
+      for (let i = 0; i < sample.length; i += 1) {
+        const row = sample[i];
+        if (!row) continue;
+        maxWidth = Math.max(maxWidth, measureTextWidth(row[idx], CELL_FONT));
+      }
+      const padded = maxWidth + 28;
+      const min = minWidthFor(h, idx, defaultSpec);
+      return clampWidth(Math.max(min, padded));
+    });
   }
+
+  function ensureBaseWidths(tab, headers, spec) {
+    if (!headers.length) return;
+    if (!state.baseWidths[tab] || state.baseWidths[tab].length !== headers.length) {
+      const ds = state.datasets[tab];
+      if (ds) {
+        state.baseWidths[tab] = buildWidthSpec(ds, spec);
+      } else {
+        state.baseWidths[tab] = headers.map((h, idx) => minWidthFor(h, idx, spec));
+      }
+    }
+  }
+
+  function alignColumnWidths(tab, headers, spec) {
+    if (!headers.length) return;
+    ensureBaseWidths(tab, headers, spec);
+    const base = state.baseWidths[tab] || headers.map((h, idx) => minWidthFor(h, idx, spec));
+    const stored = Array.isArray(state.columnWidths[tab]) ? state.columnWidths[tab] : [];
+    const next = headers.map((h, idx) => {
+      const min = minWidthFor(h, idx, spec);
+      const fallback = base[idx] ?? min;
+      const candidate = Number(stored[idx]);
+      const chosen = Number.isFinite(candidate) && candidate > 0 ? candidate : fallback;
+      return clampWidth(Math.max(min, chosen));
+    });
+    state.columnWidths[tab] = next;
+  }
+
+  function getColumnWidths(headers, spec) {
+    const tab = state.tab;
+    alignColumnWidths(tab, headers, spec);
+    return (state.columnWidths[tab] || []).slice();
+  }
+
+  function persistColumnWidths() {
+    try {
+      localStorage.setItem(WIDTH_STORAGE_KEY, JSON.stringify(state.columnWidths));
+    } catch {}
+  }
+
+  function updateTableWidth(tableEl, widths) {
+    if (!tableEl || !widths || !widths.length) return;
+    const container = tableEl.parentElement;
+    const total = widths.reduce((sum, w) => sum + w, 0);
+    const target = Math.max(total, container?.clientWidth || 0);
+    tableEl.style.width = `${target}px`;
+  }
+
+  function setupColumnResizers(tableEl, widths, headers, spec) {
+    if (!tableEl) return;
+    const tab = state.tab;
+    const cols = qsa('col', tableEl);
+    const ths = qsa('thead th', tableEl);
+    ths.forEach((th, idx) => {
+      th.classList.add('resizable');
+      const handle = document.createElement('span');
+      handle.className = 'col-resizer';
+      th.appendChild(handle);
+      let startX = 0;
+      let startWidth = widths[idx] || minWidthFor(headers[idx], idx, spec);
+      const min = () => minWidthFor(headers[idx], idx, spec);
+      const onMove = (ev) => {
+        const delta = ev.clientX - startX;
+        const nextWidth = clampWidth(Math.max(min(), startWidth + delta));
+        if (cols[idx]) cols[idx].style.width = `${nextWidth}px`;
+        widths[idx] = nextWidth;
+        th.style.width = `${nextWidth}px`;
+        qsa(`tbody td:nth-child(${idx + 1})`, tableEl).forEach(td => {
+          td.style.width = `${nextWidth}px`;
+        });
+        updateTableWidth(tableEl, widths);
+      };
+      const onUp = () => {
+        handle.classList.remove('active');
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        state.columnWidths[tab] = widths.slice();
+        persistColumnWidths();
+      };
+      handle.addEventListener('mousedown', (ev) => {
+        ev.preventDefault();
+        startX = ev.clientX;
+        startWidth = widths[idx] || min();
+        handle.classList.add('active');
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+      handle.addEventListener('dblclick', (ev) => {
+        ev.preventDefault();
+        ensureBaseWidths(tab, headers, spec);
+        const base = state.baseWidths[tab] || [];
+        const baseWidth = base[idx] ?? min();
+        widths[idx] = clampWidth(Math.max(min(), baseWidth));
+        if (cols[idx]) cols[idx].style.width = `${widths[idx]}px`;
+        th.style.width = `${widths[idx]}px`;
+        qsa(`tbody td:nth-child(${idx + 1})`, tableEl).forEach(td => {
+          td.style.width = `${widths[idx]}px`;
+        });
+        updateTableWidth(tableEl, widths);
+        state.columnWidths[tab] = widths.slice();
+        persistColumnWidths();
+      });
+    });
+    updateTableWidth(tableEl, widths);
+    state.columnWidths[tab] = widths.slice();
+  }
+
+  function autoFitActiveTab() {
+    const tab = state.tab;
+    const ds = state.datasets[tab];
+    if (!ds) return;
+    const spec = state.formatSpec[tab] || { dates: new Set(), ints: new Set() };
+    const rows = state.filtered.length ? state.filtered : (ds.rows || []);
+    const measureSource = { headers: ds.headers || [], rows };
+    state.baseWidths[tab] = buildWidthSpec(measureSource, spec, rows);
+    state.columnWidths[tab] = (state.baseWidths[tab] || []).slice();
+    persistColumnWidths();
+    renderTable();
+  }
+
+  function resetColumnWidths(tab) {
+    const ds = state.datasets[tab];
+    if (!ds) return;
+    const spec = state.formatSpec[tab] || { dates: new Set(), ints: new Set() };
+    ensureBaseWidths(tab, ds.headers || [], spec);
+    state.columnWidths[tab] = (state.baseWidths[tab] || []).slice();
+    persistColumnWidths();
+  }
+
 
   function formatCell(i, header, val, spec) {
     const v = String(val ?? '');

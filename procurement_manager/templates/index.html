@@ -6,6 +6,7 @@
   <title>調達管理ダッシュボード</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
   <script defer src="{{ url_for('static', filename='js/app2.js') }}"></script>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml" />
   <style>
     .hidden{display:none}
   </style>
@@ -146,6 +147,10 @@
 
     <main>
       <div class="card table-wrapper">
+        <div class="table-toolbar">
+          <button id="tableAutoFit" class="btn" type="button" title="表示中タブの列幅を内容に合わせて再計算します">列幅自動調整</button>
+          <button id="tableResetWidths" class="btn" type="button" title="保存済みの列幅設定を削除して既定幅に戻します">列幅リセット</button>
+        </div>
         <div id="table-container"></div>
       </div>
       <div class="pager">

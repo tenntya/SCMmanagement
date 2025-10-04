@@ -17,33 +17,113 @@ if getattr(sys, "frozen", False):
 else:
     ROOT_DIR = Path(__file__).resolve().parent.parent
 
+def _unique_paths(paths):
+    seen = set()
+    result = []
+    for raw in paths:
+        if not raw:
+            continue
+        try:
+            candidate = Path(raw)
+        except Exception:
+            continue
+        key = str(candidate).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(candidate)
+    return result
+
+
+def _ensure_writable(path: Path) -> bool:
+    test = None
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        test = path / ".__permcheck"
+        with test.open("w", encoding="utf-8") as fh:
+            fh.write("")
+        test.unlink()
+        return True
+    except Exception:
+        if test and test.exists():
+            try:
+                test.unlink()
+            except Exception:
+                pass
+        return False
+
+
+def _first_writable(paths):
+    for candidate in _unique_paths(paths):
+        if _ensure_writable(candidate):
+            return candidate
+    raise RuntimeError("no writable directory available from candidates")
+
+
+
+
+def _resolve_data_root() -> Path:
+    env_dir = os.getenv("PM_DATA_DIR") or os.getenv("PM_DATA_ROOT")
+    if env_dir:
+        return _first_writable([env_dir])
+
+    if getattr(sys, "frozen", False):
+        dist_root = ROOT_DIR / "procurement_manager"
+        if _ensure_writable(dist_root):
+            return dist_root
+        raise RuntimeError(f"cannot write to dist data directory: {dist_root}")
+
+    candidates = [ROOT_DIR / "procurement_manager"]
+    if os.name == "nt":
+        local_app = os.getenv("LOCALAPPDATA")
+        if local_app:
+            candidates.append(Path(local_app) / "SCMmanagement")
+        roaming = os.getenv("APPDATA")
+        if roaming:
+            candidates.append(Path(roaming) / "SCMmanagement")
+    candidates.append(Path.home() / ".scmmanagement")
+    return _first_writable(candidates)
+
+def _resolve_log_dir(data_root: Path) -> Path:
+    override = os.getenv("PM_LOG_DIR")
+    candidates = [override] if override else []
+    candidates.append(ROOT_DIR / "logs")
+    candidates.append(data_root / "logs")
+    if os.name == "nt":
+        local_app = os.getenv("LOCALAPPDATA")
+        if local_app:
+            candidates.append(Path(local_app) / "SCMmanagement" / "logs")
+    candidates.append(Path.home() / ".scmmanagement" / "logs")
+    return _first_writable(candidates)
+
 # ログ
-LOG_DIR = ROOT_DIR / "logs"
+DATA_ROOT = _resolve_data_root()
+DATA_DIR = DATA_ROOT / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+USER_INPUTS_FILE = DATA_DIR / "user_inputs.json"
+PROCESSED_DIR = DATA_ROOT / "processed"
+PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+
+LOG_DIR = _resolve_log_dir(DATA_ROOT)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = LOG_DIR / "app.log"
 
 # ファイルエンコーディング（既定: Windows Shift-JIS）
 ENCODING_SJIS = "cp932"
 
+# 日付フォーマット
+DATE_FMT_OUT = "%Y%m%d"
+
+
 # 本番ファイルパス（デフォルト値）。外部設定と環境変数で上書き可能。
-IF126_TEMPLATE = r"K:\\PW_Tableau\\IF126_納期日程管理\NHSAPOTHIF126_{yyyymmdd}.txt"
+IF126_TEMPLATE = r"K:\\PW_Tableau\\IF126_納期日程管理\\NHSAPOTHIF126_{yyyymmdd}.txt"
+IF130_TEMPLATE = r"K:\\PW_Tableau\\IF130_MRP警告リスト\\NHSAPOTHIF130_{yyyymmdd}.txt"
 SHORT_TEMPLATE = r"K:\\PW_MM_FileShare\\05_短納期品一覧\\西神\\短納期品(西神)_{yyyymmdd}.csv"
 
 # サンプルファイル探索（EXE隣とその親、開発時はルートも見る）
 SAMPLE_SEARCH_DIRS = [ROOT_DIR, ROOT_DIR.parent]
 SAMPLE_IF126_PATTERNS = ["NHSAPOTHIF126_*.txt"]
 SAMPLE_SHORT_PATTERNS = ["*.csv"]  # 日本語名のCSVも拾う
-
-# データ保存
-DATA_DIR = ROOT_DIR / "procurement_manager" / "data"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-USER_INPUTS_FILE = DATA_DIR / "user_inputs.json"
-PROCESSED_DIR = DATA_DIR / "processed"
-PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-
-# 日付フォーマット
-DATE_FMT_OUT = "%Y%m%d"
-
 
 # 外部設定の読込（pm_settings.ini または pm_settings.json、環境変数）
 SETTINGS_INI = ROOT_DIR / "pm_settings.ini"
@@ -81,25 +161,34 @@ def _drive_template_to_unc(tmpl: str) -> str:
 def _apply_overrides() -> None:
     global IF126_TEMPLATE, SHORT_TEMPLATE, ENCODING_SJIS, HOST, PORT, LOG_DIR, LOG_FILE, SAMPLE_SEARCH_DIRS, IF130_TEMPLATE
 
-    # 1) 環境変数で上書き
-    IF126_TEMPLATE = os.getenv("PM_IF126_TEMPLATE", IF126_TEMPLATE)
-    IF130_TEMPLATE = os.getenv("PM_IF130_TEMPLATE", globals().get("IF130_TEMPLATE", r"K:\\PW_Tableau\\IF130_MRP隴ｦ蜻翫Μ繧ｹ繝・\\NHSAPOTHIF130_{yyyymmdd}.txt"))
-    SHORT_TEMPLATE = os.getenv("PM_SHORT_TEMPLATE", SHORT_TEMPLATE)
-    ENCODING_SJIS = os.getenv("PM_ENCODING", ENCODING_SJIS)
-    host_env = os.getenv("PM_HOST")
-    port_env = os.getenv("PM_PORT")
-    if host_env:
-        HOST = host_env
-    if port_env:
+    # 1) 環境変数で上書き (環境変数が最優先)
+    env_if126 = os.getenv("PM_IF126_TEMPLATE")
+    env_if130 = os.getenv("PM_IF130_TEMPLATE")
+    env_short = os.getenv("PM_SHORT_TEMPLATE")
+    env_encoding = os.getenv("PM_ENCODING")
+    env_host = os.getenv("PM_HOST")
+    env_port = os.getenv("PM_PORT")
+    env_sample_dirs = os.getenv("PM_SAMPLE_DIRS")
+
+    if env_if126:
+        IF126_TEMPLATE = env_if126
+    if env_if130:
+        IF130_TEMPLATE = env_if130
+    if env_short:
+        SHORT_TEMPLATE = env_short
+    if env_encoding:
+        ENCODING_SJIS = env_encoding
+    if env_host:
+        HOST = env_host
+    if env_port:
         try:
-            PORT = int(port_env)
+            PORT = int(env_port)
         except Exception:
             pass
-    sample_dirs_env = os.getenv("PM_SAMPLE_DIRS")
-    if sample_dirs_env:
-        SAMPLE_SEARCH_DIRS = [Path(s.strip()) for s in sample_dirs_env.split(";") if s.strip()]
+    if env_sample_dirs:
+        SAMPLE_SEARCH_DIRS = [Path(s.strip()) for s in env_sample_dirs.split(";") if s.strip()]
 
-    # 2) INI ファイルで上書き
+    # 2) INI ファイルで上書き (環境変数が未設定の項目のみ)
     if SETTINGS_INI.exists():
         cp = configparser.ConfigParser()
         try:
@@ -107,20 +196,26 @@ def _apply_overrides() -> None:
         except Exception:
             cp.read(SETTINGS_INI)
         if cp.has_section("paths"):
-            IF126_TEMPLATE = cp.get("paths", "IF126_TEMPLATE", fallback=IF126_TEMPLATE)
-            IF130_TEMPLATE = cp.get("paths", "IF130_TEMPLATE", fallback=IF130_TEMPLATE)
-            SHORT_TEMPLATE = cp.get("paths", "SHORT_TEMPLATE", fallback=SHORT_TEMPLATE)
-            sample_dirs = cp.get("paths", "SAMPLE_DIRS", fallback=None)
-            if sample_dirs:
-                SAMPLE_SEARCH_DIRS = [Path(s.strip()) for s in sample_dirs.split(";") if s.strip()]
-        if cp.has_section("encoding"):
+            if not env_if126:
+                IF126_TEMPLATE = cp.get("paths", "IF126_TEMPLATE", fallback=IF126_TEMPLATE)
+            if not env_if130:
+                IF130_TEMPLATE = cp.get("paths", "IF130_TEMPLATE", fallback=IF130_TEMPLATE)
+            if not env_short:
+                SHORT_TEMPLATE = cp.get("paths", "SHORT_TEMPLATE", fallback=SHORT_TEMPLATE)
+            if not env_sample_dirs:
+                sample_dirs = cp.get("paths", "SAMPLE_DIRS", fallback=None)
+                if sample_dirs:
+                    SAMPLE_SEARCH_DIRS = [Path(s.strip()) for s in sample_dirs.split(";") if s.strip()]
+        if cp.has_section("encoding") and not env_encoding:
             ENCODING_SJIS = cp.get("encoding", "file", fallback=ENCODING_SJIS)
         if cp.has_section("server"):
-            HOST = cp.get("server", "HOST", fallback=HOST)
-            try:
-                PORT = cp.getint("server", "PORT", fallback=PORT)
-            except Exception:
-                pass
+            if not env_host:
+                HOST = cp.get("server", "HOST", fallback=HOST)
+            if not env_port:
+                try:
+                    PORT = cp.getint("server", "PORT", fallback=PORT)
+                except Exception:
+                    pass
         if cp.has_section("logs"):
             logdir = cp.get("logs", "LOG_DIR", fallback=None)
             if logdir:
@@ -133,26 +228,31 @@ def _apply_overrides() -> None:
         SHORT_TEMPLATE = _drive_template_to_unc(SHORT_TEMPLATE)
         return
 
-    # 3) JSON ファイルで上書き（任意）
+    # 3) JSON ファイルで上書き (環境変数が未設定の項目のみ)
     if SETTINGS_JSON.exists():
         try:
             d = json.loads(SETTINGS_JSON.read_text(encoding="utf-8"))
         except Exception:
             d = {}
         paths = d.get("paths", {}) if isinstance(d.get("paths"), dict) else d
-        IF126_TEMPLATE = str(paths.get("IF126_TEMPLATE", IF126_TEMPLATE))
-        IF130_TEMPLATE = str(paths.get("IF130_TEMPLATE", IF130_TEMPLATE))
-        SHORT_TEMPLATE = str(paths.get("SHORT_TEMPLATE", SHORT_TEMPLATE))
+        if not env_if126:
+            IF126_TEMPLATE = str(paths.get("IF126_TEMPLATE", IF126_TEMPLATE))
+        if not env_if130:
+            IF130_TEMPLATE = str(paths.get("IF130_TEMPLATE", IF130_TEMPLATE))
+        if not env_short:
+            SHORT_TEMPLATE = str(paths.get("SHORT_TEMPLATE", SHORT_TEMPLATE))
         enc = d.get("encoding", {})
-        if isinstance(enc, dict):
+        if isinstance(enc, dict) and not env_encoding:
             ENCODING_SJIS = str(enc.get("file", ENCODING_SJIS))
         server = d.get("server", {})
         if isinstance(server, dict):
-            HOST = str(server.get("HOST", HOST))
-            try:
-                PORT = int(server.get("PORT", PORT))
-            except Exception:
-                pass
+            if not env_host:
+                HOST = str(server.get("HOST", HOST))
+            if not env_port:
+                try:
+                    PORT = int(server.get("PORT", PORT))
+                except Exception:
+                    pass
         logs = d.get("logs", {})
         if isinstance(logs, dict) and logs.get("LOG_DIR"):
             LOG_DIR = Path(str(logs["LOG_DIR"]))
@@ -162,8 +262,6 @@ def _apply_overrides() -> None:
     IF126_TEMPLATE = _drive_template_to_unc(IF126_TEMPLATE)
     IF130_TEMPLATE = _drive_template_to_unc(IF130_TEMPLATE)
     SHORT_TEMPLATE = _drive_template_to_unc(SHORT_TEMPLATE)
-
-
 _apply_overrides()
 
 # --- Disable sample mode globally (prefer UNC/prod only)

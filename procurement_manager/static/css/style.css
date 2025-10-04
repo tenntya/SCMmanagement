@@ -128,11 +128,13 @@ body {
 .hz-name { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: center; }
 
 .table-wrapper { margin: 0; padding: 0; overflow: hidden; }
+.table-toolbar { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding: 12px 16px 8px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.table-toolbar .btn { padding: 6px 12px; font-size: 12px; border-radius: 8px; }
 /* テーブル内スクロールにして thead の sticky を安定させる */
-#table-container { overflow: auto; max-height: calc(100vh - 280px); }
-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; border: 1px solid var(--grid); background: #fff; }
+#table-container { overflow: auto; width: 100%; max-height: calc(100vh - 280px); }
+table { width: auto; min-width: 100%; border-collapse: separate; border-spacing: 0; table-layout: auto; border: 1px solid var(--grid); background: #fff; }
 th, td { padding: 10px 12px; font-size: 13px; border-right: 1px solid var(--grid); border-bottom: 1px solid var(--grid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
-th { position: sticky; top: 0; text-align: left; background: #f9fafb; z-index: 1; }
+th { position: sticky; top: 0; text-align: left; background: #f9fafb; z-index: 3; }
 th:last-child, td:last-child { border-right: none; }
 thead tr:first-child th { border-top: none; }
 tbody tr:last-child td { border-bottom: none; }
@@ -155,3 +157,27 @@ input.edit-cell, textarea.edit-cell {
 .muted { color: var(--muted); }
 
 footer { padding: 16px 8px; color: var(--muted); border-top: 1px solid var(--border); background: #fff; }
+th .col-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+}
+th .col-resizer::after {
+  content: '';
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  right: 3px;
+  width: 2px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.6);
+}
+th .col-resizer:hover::after,
+th .col-resizer.active::after {
+  background: rgba(37, 99, 235, 0.8);
+}
+th.resizable { padding-right: 18px; }
