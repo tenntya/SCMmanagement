@@ -15,6 +15,17 @@ from typing import Dict, Tuple
 _DATA_CACHE: Dict[str, Tuple[float, dict]] = {}
 _CACHE_TTL_SEC = 120.0
 
+def _invalidate_api_cache(tab: str) -> None:
+    related = {tab}
+    if tab == 'houchozan':
+        related.add('houchozan_today')
+    elif tab == 'houchozan_today':
+        related.add('houchozan')
+    for key in list(_DATA_CACHE.keys()):
+        name = key.split('|', 1)[0]
+        if name in related:
+            _DATA_CACHE.pop(key, None)
+
 # 直実行/モジュール実行の両対応
 PKG_DIR = Path(__file__).resolve().parent
 REPO_DIR = PKG_DIR.parent
@@ -192,6 +203,7 @@ def create_app() -> Flask:
         try:
             tab_norm = "houchozan" if tab == "houchozan_today" else tab
             dp.save_user_input(tab_norm, key, field, value)
+            _invalidate_api_cache(tab_norm)
             return jsonify({"ok": True})
         except Exception as e:
             app.logger.exception("保存エラー: %s", e)

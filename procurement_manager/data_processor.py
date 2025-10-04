@@ -202,6 +202,19 @@ def _save_cached_payload(tab: str, mode: str, ref_date: date, sources: List[Tupl
                 pass
 
 
+def invalidate_tab_cache(tab: str) -> None:
+    """Remove cached files for the specified tab (all modes/dates)."""
+    safe_tab = (tab or '').replace('/', '_')
+    pattern = f"{safe_tab}_*.cache.json"
+    try:
+        for cached in config.PROCESSED_DIR.glob(pattern):
+            try:
+                cached.unlink()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 def _filter_excluded_suppliers(df: pd.DataFrame) -> pd.DataFrame:
     if not EXCLUDED_SUPPLIER_CODES:
         return df
@@ -456,16 +469,24 @@ def load_user_inputs() -> Dict:
         return {}
 
 
+
+
 def save_user_input(tab: str, key: str, field: str, value: str) -> None:
     data = load_user_inputs()
     tabmap = data.setdefault(tab, {})
     entry = tabmap.setdefault(key, {})
-    # 正規化されたフィールド名に格納
+    # 追加されたフィールド名を正規化
     field_norm = _normalize_field_name(tab, field)
     entry[field_norm] = value
-    tmp = config.USER_INPUTS_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp = config.USER_INPUTS_FILE.with_suffix('.tmp')
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
     tmp.replace(config.USER_INPUTS_FILE)
+    invalidate_tab_cache(tab)
+    if tab == 'houchozan':
+        invalidate_tab_cache('houchozan_today')
+
+
+
 
 
 def _normalize_field_name(tab: str, field: str) -> str:
@@ -554,6 +575,8 @@ def set_houchozan_name(name: str, add_if_missing: bool = True) -> Dict[str, obje
     if name:
         settings["houchozan_current_name"] = name
     _save_all(data)
+    invalidate_tab_cache('houchozan')
+    invalidate_tab_cache('houchozan_today')
     return {"names": names, "current": settings.get("houchozan_current_name")}
 
 
