@@ -153,6 +153,16 @@ def _source_info_for(path: Path) -> Tuple[str, float, int]:
         return str(path), 0.0, 0
 
 
+def _user_inputs_source_info() -> Tuple[str, float, int]:
+    try:
+        _ensure_user_inputs_file()
+        path = config.USER_INPUTS_FILE
+        stat = path.stat()
+        return str(path), float(stat.st_mtime), int(stat.st_size)
+    except Exception:
+        return str(config.USER_INPUTS_FILE), 0.0, 0
+
+
 def _normalize_sources(sources: List[Tuple[str, float, int]]) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     for p, mtime, size in sources:
@@ -465,7 +475,8 @@ def load_user_inputs() -> Dict:
             tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(config.USER_INPUTS_FILE)
         return data
-    except Exception:
+    except Exception as exc:
+        logger.exception("failed to load user inputs: %s", exc)
         return {}
 
 
@@ -539,7 +550,8 @@ def _load_all() -> Dict:
     _ensure_user_inputs_file()
     try:
         return json.loads(config.USER_INPUTS_FILE.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as exc:
+        logger.exception("failed to load user inputs cache: %s", exc)
         return {}
 
 
@@ -758,6 +770,7 @@ def load_tab_data(tab: str, use_sample: bool = True, ref_date: Optional[date] = 
             if not p:
                 raise FileNotFoundError("IF126データが見つかりません")
             sources_info = [_source_info_for(p)]
+            sources_info.append(_user_inputs_source_info())
             cached = _load_cached_payload(tab, mode, ref_date, sources_info)
             if cached:
                 return cached
@@ -772,6 +785,7 @@ def load_tab_data(tab: str, use_sample: bool = True, ref_date: Optional[date] = 
             if not ps:
                 raise FileNotFoundError("短納期CSVが見つかりません")
             sources_info = [_source_info_for(pp) for pp in ps]
+            sources_info.append(_user_inputs_source_info())
             cached = _load_cached_payload(tab, mode, ref_date, sources_info)
             if cached:
                 return cached

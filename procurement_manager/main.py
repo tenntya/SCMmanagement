@@ -12,8 +12,21 @@ from flask import Flask, jsonify, render_template, request, redirect, url_for
 from typing import Dict, Tuple
 
 # Simple in-process cache for API payloads
-_DATA_CACHE: Dict[str, Tuple[float, dict]] = {}
+_DATA_CACHE: Dict[str, Tuple[float, dict, Tuple[int, int]]] = {}
 _CACHE_TTL_SEC = 120.0
+
+
+def _user_inputs_version() -> Tuple[int, int]:
+    path = getattr(config, "USER_INPUTS_FILE", None)
+    try:
+        if not isinstance(path, Path):
+            path = Path(path)
+        stat = path.stat()
+        mtime = getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))
+        return int(mtime), int(stat.st_size)
+    except Exception:
+        return 0, 0
+
 
 def _invalidate_api_cache(tab: str) -> None:
     related = {tab}
@@ -100,10 +113,13 @@ def create_app() -> Flask:
         force = (request.args.get("force") or "").lower() in ("1", "true", "yes")
         now = time.time()
         ck = f"{tab}|{int(use_sample)}"
+        inputs_version_before = _user_inputs_version()
         if not force:
             cached = _DATA_CACHE.get(ck)
-            if cached and (now - cached[0] < _CACHE_TTL_SEC):
-                return jsonify(cached[1])
+            if cached:
+                cached_ts, cached_payload, cached_version = cached
+                if (now - cached_ts < _CACHE_TTL_SEC) and cached_version == inputs_version_before:
+                    return jsonify(cached_payload)
         # 当日検収確認（発注残ベースの当日＋検収除外）
         if tab == "houchozan_today":
             try:
@@ -124,7 +140,8 @@ def create_app() -> Flask:
                     "sourceDates": [src_dt.strftime("%Y/%m/%d")],
                     "nameLetter": "C",
                 }
-                _DATA_CACHE[ck] = (now, data_obj)
+                inputs_version = _user_inputs_version()
+                _DATA_CACHE[ck] = (now, data_obj, inputs_version)
                 return jsonify(data_obj)
             except Exception as e:
                 app.logger.exception("houchozan_today endpoint error: %s", e)
@@ -149,15 +166,17 @@ def create_app() -> Flask:
                     "sourceDates": [src_dt.strftime("%Y/%m/%d")],
                     "nameLetter": "C" if "C" in letters else (letters[0] if letters else "A"),
                 }
-                _DATA_CACHE[ck] = (now, data_obj)
+                inputs_version = _user_inputs_version()
+                _DATA_CACHE[ck] = (now, data_obj, inputs_version)
                 return jsonify(data_obj)
             except Exception as e:
                 app.logger.exception("reschedule endpoint error: %s", e)
                 return jsonify({"error": str(e)})
         data = dp.load_tab_data(tab, use_sample=use_sample)
+        inputs_version = _user_inputs_version()
         # store successful payloads in cache early (fallback block below is disabled)
         if isinstance(data, dict) and not data.get("error"):
-            _DATA_CACHE[ck] = (now, data)
+            _DATA_CACHE[ck] = (now, data, inputs_version)
         # 本番指定でエラー時はサンプルへ自動フォールバック
         if False and (not use_sample) and isinstance(data, dict) and data.get("error"):
             try:
@@ -262,11 +281,12 @@ def setup_logging():
     )
     try:
         logging.getLogger("main").info(
-            "config: ROOT_DIR=%s, IF126_TEMPLATE=%s, SHORT_TEMPLATE=%s, ENCODING=%s",
+            "config: ROOT_DIR=%s, IF126_TEMPLATE=%s, SHORT_TEMPLATE=%s, ENCODING=%s, USER_INPUTS_FILE=%s",
             str(getattr(config, "ROOT_DIR", "")),
             getattr(config, "IF126_TEMPLATE", ""),
             getattr(config, "SHORT_TEMPLATE", ""),
             getattr(config, "ENCODING_SJIS", ""),
+            str(getattr(config, "USER_INPUTS_FILE", "")),
         )
     except Exception:
         pass

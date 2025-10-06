@@ -158,8 +158,25 @@ def _drive_template_to_unc(tmpl: str) -> str:
         return tmpl
 
 
+def _set_user_inputs_file(raw) -> None:
+    global USER_INPUTS_FILE
+    if raw is None:
+        return
+    text_value = str(raw).strip()
+    if not text_value:
+        return
+    normalized = _drive_template_to_unc(text_value)
+    candidate = Path(normalized).expanduser()
+    if not candidate.is_absolute():
+        candidate = DATA_DIR / candidate
+    parent = candidate.parent
+    if not _ensure_writable(parent):
+        raise RuntimeError(f"cannot write to user inputs directory: {parent}")
+    USER_INPUTS_FILE = candidate
+
+
 def _apply_overrides() -> None:
-    global IF126_TEMPLATE, SHORT_TEMPLATE, ENCODING_SJIS, HOST, PORT, LOG_DIR, LOG_FILE, SAMPLE_SEARCH_DIRS, IF130_TEMPLATE
+    global IF126_TEMPLATE, SHORT_TEMPLATE, ENCODING_SJIS, HOST, PORT, LOG_DIR, LOG_FILE, SAMPLE_SEARCH_DIRS, IF130_TEMPLATE, USER_INPUTS_FILE
 
     # 1) 環境変数で上書き (環境変数が最優先)
     env_if126 = os.getenv("PM_IF126_TEMPLATE")
@@ -169,6 +186,7 @@ def _apply_overrides() -> None:
     env_host = os.getenv("PM_HOST")
     env_port = os.getenv("PM_PORT")
     env_sample_dirs = os.getenv("PM_SAMPLE_DIRS")
+    env_user_inputs = os.getenv("PM_USER_INPUTS_FILE")
 
     if env_if126:
         IF126_TEMPLATE = env_if126
@@ -187,6 +205,8 @@ def _apply_overrides() -> None:
             pass
     if env_sample_dirs:
         SAMPLE_SEARCH_DIRS = [Path(s.strip()) for s in env_sample_dirs.split(";") if s.strip()]
+    if env_user_inputs:
+        _set_user_inputs_file(env_user_inputs)
 
     # 2) INI ファイルで上書き (環境変数が未設定の項目のみ)
     if SETTINGS_INI.exists():
@@ -206,6 +226,10 @@ def _apply_overrides() -> None:
                 sample_dirs = cp.get("paths", "SAMPLE_DIRS", fallback=None)
                 if sample_dirs:
                     SAMPLE_SEARCH_DIRS = [Path(s.strip()) for s in sample_dirs.split(";") if s.strip()]
+            if not env_user_inputs:
+                user_inputs_path = cp.get("paths", "USER_INPUTS_FILE", fallback=None)
+                if user_inputs_path:
+                    _set_user_inputs_file(user_inputs_path)
         if cp.has_section("encoding") and not env_encoding:
             ENCODING_SJIS = cp.get("encoding", "file", fallback=ENCODING_SJIS)
         if cp.has_section("server"):
@@ -241,6 +265,10 @@ def _apply_overrides() -> None:
             IF130_TEMPLATE = str(paths.get("IF130_TEMPLATE", IF130_TEMPLATE))
         if not env_short:
             SHORT_TEMPLATE = str(paths.get("SHORT_TEMPLATE", SHORT_TEMPLATE))
+        if not env_user_inputs:
+            user_inputs_path = paths.get("USER_INPUTS_FILE")
+            if user_inputs_path:
+                _set_user_inputs_file(user_inputs_path)
         enc = d.get("encoding", {})
         if isinstance(enc, dict) and not env_encoding:
             ENCODING_SJIS = str(enc.get("file", ENCODING_SJIS))
@@ -263,6 +291,7 @@ def _apply_overrides() -> None:
     IF130_TEMPLATE = _drive_template_to_unc(IF130_TEMPLATE)
     SHORT_TEMPLATE = _drive_template_to_unc(SHORT_TEMPLATE)
 _apply_overrides()
+_set_user_inputs_file(USER_INPUTS_FILE)
 
 # --- Disable sample mode globally (prefer UNC/prod only)
 SAMPLE_SEARCH_DIRS = []
