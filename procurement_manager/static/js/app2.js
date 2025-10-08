@@ -140,6 +140,7 @@
         state.globalFilters.classification = globalKindSelect.value || '';
         applyFilters();
         renderTable();
+        renderNameOptions(state.tab);
       });
     }
 
@@ -743,14 +744,33 @@ function cellHtml(i, header, val, row, spec) {
     const ds = state.datasets[tab];
     if (!ds) { sel.innerHTML = ''; return; }
     const letters = ds.letters || [];
+    const headers = Array.isArray(ds.headers) ? ds.headers : [];
     const nameLetter = ds.nameLetter || 'C';
     const idx = letters.indexOf(nameLetter);
     if (idx < 0) { sel.innerHTML = ''; return; }
-    const uniq = new Set((ds.rows || []).map(r => String(r[idx]||'')));
-    const options = ['<option value="">(指定なし)</option>'].concat(Array.from(uniq).filter(Boolean).slice(0,2000).map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`));
+    const rows = Array.isArray(ds.rows) ? ds.rows : [];
+    const globalKind = (state.globalFilters?.classification || '').trim().toUpperCase();
+    let sourceRows = rows;
+    if (globalKind) {
+      const idxKind = headerIndex(headers, '分類');
+      if (idxKind >= 0) {
+        sourceRows = sourceRows.filter(r => String(r[idxKind] || '').trim().toUpperCase() === globalKind);
+      }
+    }
+    const uniq = new Set(sourceRows.map(r => String(r[idx] || '').trim()));
+    const options = ['<option value="">(指定なし)</option>'].concat(
+      Array.from(uniq)
+        .filter(Boolean)
+        .slice(0, 2000)
+        .map((v) => '<option value="' + escapeHtml(v) + '">' + escapeHtml(v) + '</option>')
+    );
     sel.innerHTML = options.join('');
     const cur = state.nameFilter[tab] || '';
     sel.value = cur;
+    if (sel.value !== cur) {
+      sel.value = '';
+      state.nameFilter[tab] = '';
+    }
   }
 
   function renderDates() {
