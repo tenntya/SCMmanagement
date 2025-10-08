@@ -55,6 +55,14 @@
     return Math.min(MAX_COL_WIDTH, Math.max(DEFAULT_MIN_WIDTH, Math.ceil(px)));
   }
 
+  function parseNumericValue(val) {
+    if (val === null || val === undefined) return NaN;
+    const cleaned = String(val).replace(/[\s,]/g, '');
+    if (!cleaned) return NaN;
+    const num = Number(cleaned);
+    return Number.isFinite(num) ? num : NaN;
+  }
+
 
   // One-shot force flag for API data reload
   try {
@@ -534,10 +542,27 @@ function cellHtml(i, header, val, row, spec) {
   }
 
   function buildFormatSpec(ds) {
-    const headers = ds.headers || [];
+    const headers = Array.isArray(ds.headers) ? ds.headers : [];
+    const rows = Array.isArray(ds.rows) ? ds.rows : [];
+    const sample = rows.slice(0, MAX_SAMPLE_ROWS);
     const dates = new Set();
     const ints = new Set();
-    headers.forEach((h, i) => { if (String(h||'').includes('日') || String(h||'').match(/Date/i)) dates.add(i); });
+    headers.forEach((h, i) => {
+      const label = String(h || '');
+      if (label.includes('日') || /Date/i.test(label)) {
+        dates.add(i);
+      }
+      const normalized = label.replace(/\s+/g, '').toLowerCase();
+      const isQuantityHeader = label.includes('数量') || normalized.includes('qty');
+      if (isQuantityHeader) {
+        const hasNumeric = sample.some((row) => {
+          if (!row) return false;
+          const num = parseNumericValue(row[i]);
+          return Number.isFinite(num);
+        });
+        if (hasNumeric) ints.add(i);
+      }
+    });
     return { dates, ints };
   }
 
@@ -696,9 +721,17 @@ function cellHtml(i, header, val, row, spec) {
 
 
   function formatCell(i, header, val, spec) {
-    const v = String(val ?? '');
-    if (spec && spec.ints && spec.ints.has(i)) return v.replace(/(\d)(?=(\d{3})+(?!\d))/g,'$1,');
-    return escapeHtml(v).replaceAll('\n','<br>');
+    const raw = val ?? '';
+    const v = String(raw ?? '');
+    if (spec?.ints?.has(i)) {
+      const num = parseNumericValue(raw);
+      if (Number.isFinite(num)) {
+        const whole = Math.trunc(num);
+        return escapeHtml(whole.toLocaleString('ja-JP'));
+      }
+      return escapeHtml(v).replaceAll('\n', '<br>');
+    }
+    return escapeHtml(v).replaceAll('\n', '<br>');
   }
 
   function compareBySpec(x, y, spec, idx) {
