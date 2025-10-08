@@ -12,6 +12,7 @@
     baseWidths: {},
     columnWidths: {},
     rowChecks: { short: new Set() },
+    globalFilters: { classification: '' },
   };
 
   const qs = (sel, el) => (el ?? document).querySelector(sel);
@@ -132,6 +133,16 @@
         });
       }
     });
+    const globalKindSelect = qs('#globalKindSelect');
+    if (globalKindSelect) {
+      globalKindSelect.value = state.globalFilters.classification || '';
+      globalKindSelect.addEventListener('change', () => {
+        state.globalFilters.classification = globalKindSelect.value || '';
+        applyFilters();
+        renderTable();
+      });
+    }
+
     // restore collapsed state
     try { const saved = localStorage.getItem('filterCollapsed'); if (saved) state.filterCollapsed = JSON.parse(saved) || {}; } catch {}
     setupFilterCards();
@@ -245,6 +256,7 @@
       frow = qs('#filters-houchozan');
     }
     const preds = [];
+    const headers = Array.isArray(ds && ds.headers) ? ds.headers : [];
     const letters = (ds && ds.letters) ? ds.letters : [];
     qsa('input[type="text"][data-col], select[data-col]', frow).forEach(el => {
       const col = el.dataset.col;
@@ -297,6 +309,13 @@
         if (codeIdx < 0) codeIdx = letters.indexOf('B');
         if (codeIdx < 0) codeIdx = letters.indexOf('A');
         preds.push((r) => classifyKind(String(r[codeIdx] || '')) === kval);
+      }
+    }
+    const globalKind = (state.globalFilters?.classification || '').trim().toUpperCase();
+    if (globalKind) {
+      const idxKind = headerIndex(headers, '分類');
+      if (idxKind >= 0) {
+        preds.push((r) => String(r[idxKind] || '').trim().toUpperCase() === globalKind);
       }
     }
     return preds;

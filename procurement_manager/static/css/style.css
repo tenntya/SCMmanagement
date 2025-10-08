@@ -62,8 +62,27 @@ body {
 }
 
 .tabs {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; justify-content: flex-start;
+  flex-wrap: wrap;
   gap: 12px; padding: 18px 8px;
+}
+.tabs-primary {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+}
+.global-filters {
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.global-filters label {
+  display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted);
+}
+.global-filters span {
+  font-size: 12px;
+}
+.global-filters select {
+  height: 34px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border); background: #ffffff; color: var(--text);
+}
+.global-filters select:focus {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px rgba(30,58,138,.2);
 }
 .tabs-segmented {
   display: inline-flex; gap: 6px; padding: 6px; border-radius: 12px;

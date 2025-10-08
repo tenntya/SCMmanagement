@@ -26,23 +26,36 @@
   </header>
 
   <div class="container">
-    <nav class="tabs">
-      <div class="tabs-segmented">
-        <button class="tab active" data-tab="houchozan">発注残</button>
-        <button class="tab" data-tab="short">短納期品</button>
-        <button class="tab" data-tab="text_items">テキスト品</button>
-        <button class="tab" data-tab="reschedule">再日程計画確認</button>
-      </div>
-      <div class="logic-switch">
-        絞り込み:
-        <label class="chip"><input type="radio" name="logic" value="AND" checked /> AND</label>
-        <label class="chip"><input type="radio" name="logic" value="OR" /> OR</label>
-      </div>
-      <div class="data-dates" title="データ日付">
-        <span class="muted">データ日付:</span>
-        <span id="dataDates" class="date-badges"></span>
-      </div>
-    </nav>
+    <nav class="tabs">
+      <div class="tabs-primary">
+        <div class="tabs-segmented">
+          <button class="tab active" data-tab="houchozan">発注残</button>
+          <button class="tab" data-tab="short">短納期品</button>
+          <button class="tab" data-tab="text_items">テキスト品</button>
+          <button class="tab" data-tab="reschedule">再日程計画確認</button>
+        </div>
+        <div class="global-filters" title="分類で全タブを絞り込み">
+          <label>
+            <span>分類</span>
+            <select id="globalKindSelect">
+              <option value="">(指定なし)</option>
+              <option value="TRP">TRP</option>
+              <option value="SVF">SVF</option>
+            </select>
+          </label>
+        </div>
+        <div class="logic-switch">
+          絞り込み:
+          <label class="chip"><input type="radio" name="logic" value="AND" checked /> AND</label>
+          <label class="chip"><input type="radio" name="logic" value="OR" /> OR</label>
+        </div>
+      </div>
+      <div class="data-dates" title="データ日時">
+        <span class="muted">データ日時:</span>
+        <span id="dataDates" class="date-badges"></span>
+      </div>
+    </nav>
+
 
     <section class="filters card filter-card" id="filters-card-houchozan">
       <div class="card-title"><span class="dot dot-accent"></span> 発注残 フィルタ</div>
@@ -59,13 +72,6 @@
         <label class="field sm"><span>C列</span><input type="text" data-col="C" placeholder="部分一致" /></label>
         <label class="field sm"><span>D列</span><input type="text" data-col="D" placeholder="部分一致" /></label>
         <label class="field sm"><span>F列</span><input type="text" data-col="F" placeholder="部分一致" /></label>
-        <label class="field sm"><span>分類</span>
-          <select data-col="分類">
-            <option value="">(指定なし)</option>
-            <option value="TRP">TRP</option>
-            <option value="SVF">SVF</option>
-          </select>
-        </label>
         <label class="field sm"><span>品目種別</span>
           <select data-col="__kind__">
             <option value="">(指定なし)</option>
@@ -97,13 +103,6 @@
         <label class="field sm"><span>C列</span><input type="text" data-col="C" placeholder="部分一致" /></label>
         <label class="field sm"><span>D列</span><input type="text" data-col="D" placeholder="部分一致" /></label>
         <label class="field sm"><span>F列</span><input type="text" data-col="F" placeholder="部分一致" /></label>
-        <label class="field sm"><span>分類</span>
-          <select data-col="分類">
-            <option value="">(指定なし)</option>
-            <option value="TRP">TRP</option>
-            <option value="SVF">SVF</option>
-          </select>
-        </label>
         <label class="field wide"><span>P列(日付)</span>
           <div class="range">
             <input type="date" data-col="P" data-date="from" />
@@ -135,13 +134,6 @@
       <div class="filters-row" id="filters-reschedule">
         <label class="field sm"><span>A列</span><input type="text" data-col="A" placeholder="部分一致" /></label>
         <label class="field sm"><span>D列</span><input type="text" data-col="D" placeholder="部分一致" /></label>
-        <label class="field sm"><span>分類</span>
-          <select data-col="分類">
-            <option value="">(指定なし)</option>
-            <option value="TRP">TRP</option>
-            <option value="SVF">SVF</option>
-          </select>
-        </label>
       </div>
     </section>
 
