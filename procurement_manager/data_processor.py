@@ -17,7 +17,7 @@ from . import config
 logger = logging.getLogger(__name__)
 
 
-_CACHE_VERSION = 5
+_CACHE_VERSION = 6
 
 EXCLUDED_SUPPLIER_CODES = {"NVAA294825", "NVAA351706", "NVAA280167"}
 _SUPPLIER_CODE_LETTER = "B"
@@ -114,14 +114,53 @@ def _normalize_zero_like_date_value(value: Any) -> Any:
 def _normalize_supplier_confirmation_dates(df: pd.DataFrame) -> None:
     if df.empty:
         return
+    tokens = ("納入日付", "納入日程")
     target_cols = [
         col for col in df.columns
-        if isinstance(col, str) and "サプライヤ" in col and "納入日付" in col
+        if isinstance(col, str) and "サプライヤ" in col and any(tok in col for tok in tokens)
     ]
     if not target_cols:
         return
     for col in target_cols:
         df[col] = df[col].apply(_normalize_zero_like_date_value)
+
+DISPLAY_DATE_COLUMNS = (
+    "レコード登録日付",
+    "明細納入日付",
+    "サプライヤ確認の納入日付",
+    "サプライヤ確認の納入日程",
+)
+
+
+def _format_display_date_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float) and pd.isna(value):
+        return ""
+    s = str(value).strip()
+    if not s:
+        return ""
+    try:
+        parsed = parse_any_date(s)
+    except Exception:
+        parsed = None
+    if isinstance(parsed, date):
+        return parsed.strftime("%Y/%m/%d")
+    digits = ''.join(ch for ch in s if ch.isdigit())
+    if len(digits) == 8:
+        try:
+            return f"{digits[:4]}/{digits[4:6]}/{digits[6:]}"
+        except Exception:
+            pass
+    return s
+
+
+def _apply_display_date_formatting(df: pd.DataFrame) -> None:
+    if df.empty:
+        return
+    for col in DISPLAY_DATE_COLUMNS:
+        if col in df.columns:
+            df[col] = df[col].apply(_format_display_date_value)
 
 # ---------- サンプル/実データ パス解決 ----------
 
@@ -712,6 +751,7 @@ def build_houchozan(df_if: pd.DataFrame, today: date) -> Tuple[List[str], List[s
     view_df["分類"] = df2["分類"].values
     view_df["自由入力"] = free
     _normalize_supplier_confirmation_dates(view_df)
+    _apply_display_date_formatting(view_df)
     letters = letters + [None, None, None]
     return list(view_df.columns), letters, view_df.reset_index(drop=True), key_letter
 
@@ -764,6 +804,7 @@ def build_houchozan_today(df_if: pd.DataFrame, today: date) -> Tuple[List[str], 
         except Exception:
             pass
     _normalize_supplier_confirmation_dates(view_df)
+    _apply_display_date_formatting(view_df)
     return headers, letters, view_df.reset_index(drop=True), key_letter
 
 
@@ -791,6 +832,7 @@ def build_text_items(df_if: pd.DataFrame, today: date) -> Tuple[List[str], List[
     view_df["分類"] = df2["分類"].values
     view_df["自由入力"] = free
     _normalize_supplier_confirmation_dates(view_df)
+    _apply_display_date_formatting(view_df)
     letters = letters + [None, None, None]
     return list(view_df.columns), letters, view_df.reset_index(drop=True), key_letter
 
@@ -825,6 +867,7 @@ def build_short(df_short: pd.DataFrame, today: date) -> Tuple[List[str], List[Op
     view_df = view_df.copy()
     view_df["自由入力"] = notes
     _normalize_supplier_confirmation_dates(view_df)
+    _apply_display_date_formatting(view_df)
     letters_ret = letters + [None]
     return list(view_df.columns), letters_ret, view_df.reset_index(drop=True), key_letter, checked_keys
 
