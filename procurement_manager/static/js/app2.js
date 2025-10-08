@@ -11,6 +11,7 @@
     filterCollapsed: {},
     baseWidths: {},
     columnWidths: {},
+    rowChecks: { short: new Set() },
   };
 
   const qs = (sel, el) => (el ?? document).querySelector(sel);
@@ -22,6 +23,7 @@
   const HEADER_FONT = '600 13px "Segoe UI", "Noto Sans JP", sans-serif';
   const CELL_FONT = '13px "Segoe UI", "Noto Sans JP", sans-serif';
   const MAX_SAMPLE_ROWS = 200;
+  const SHORT_CHECK_COL_WIDTH = 52;
   let measureCtx = null;
 
   function getMeasureContext(font) {
@@ -111,6 +113,7 @@
     qs('#nextPage')?.addEventListener('click', () => { const max = Math.max(1, Math.ceil(state.filtered.length/state.pageSize)); if (state.page<max){ state.page++; renderTable(); }});
     qsa('input[name="logic"]').forEach(el => el.addEventListener('change', () => { applyFilters(); renderTable(); }));
     qsa('input[type="text"][data-col], select[data-col], input[type="date"][data-col]').forEach(el => {
+      if (el.classList.contains('edit-cell')) return;
       el.addEventListener('input', () => { applyFilters(); renderTable(); });
       el.addEventListener('change', () => { applyFilters(); renderTable(); });
     });
@@ -213,6 +216,11 @@
       const data = await res.json();
       if (data.error) return renderError(data.error);
       state.datasets[tab] = data;
+      if (tab === 'short') {
+        const initial = Array.isArray(data.checkedKeys) ? data.checkedKeys.map(v => String(v ?? '')) : [];
+        state.rowChecks.short = new Set(initial);
+        data.checkedKeys = initial;
+      }
       const spec = buildFormatSpec(data, tab);
       state.formatSpec[tab] = spec;
       state.baseWidths[tab] = buildWidthSpec(data, spec);
@@ -328,30 +336,85 @@
     return '通常';
   }
 
+  function ensureRowCheckSet(tab) {
+    if (!state.rowChecks[tab]) state.rowChecks[tab] = new Set();
+    return state.rowChecks[tab];
+  }
+
   function renderTable() {
     const ds = state.datasets[state.tab];
     if (!ds) return;
     const { headers } = ds;
     const spec = state.formatSpec[state.tab] || { dates: new Set(), ints: new Set() };
     const cont = qs('#table-container');
-    const start = (state.page - 1) * state.pageSize;
-    const end = start + state.pageSize;
-    const pageRows = state.filtered.slice(start, end);
-    const ths = headers.map((h, i) => `<th class="sortable" data-idx="${i}">${h}</th>`).join('');
-    const rowsHtml = pageRows.map(r => `<tr>${r.map((v, i) => cellHtml(i, headers[i], v, r, spec)).join('')}</tr>`).join('');
+    const pageStart = (state.page - 1) * state.pageSize;
+    const pageEnd = pageStart + state.pageSize;
+    const pageRows = state.filtered.slice(pageStart, pageEnd);
+    const isShort = state.tab === 'short';
+    const keyIdx = (ds.letters || []).indexOf(ds.keyLetter || '');
+    let checkboxIdx = -1;
+    if (isShort) {
+      checkboxIdx = headers.findIndex(h => String(h || '').includes('備') || String(h || '').includes('自由'));
+      if (checkboxIdx < 0) checkboxIdx = headers.length;
+    }
+    const checkSet = isShort ? ensureRowCheckSet('short') : null;
     const widths = getColumnWidths(headers, spec);
-    const colgroup = widths.map(w => `<col style="width:${w}px">`).join('');
-    const totalWidth = widths.reduce((sum, w) => sum + w, 0);
+    let totalWidth = widths.reduce((sum, w) => sum + w, 0);
+    if (checkboxIdx >= 0) totalWidth += SHORT_CHECK_COL_WIDTH;
+    const headerCells = [];
+    const colParts = [];
+    headers.forEach((h, idx) => {
+      if (checkboxIdx === idx) {
+        headerCells.push('<th class="row-check-header">チェック</th>');
+        colParts.push(`<col class="short-check-col" style="width:${SHORT_CHECK_COL_WIDTH}px">`);
+      }
+      headerCells.push(`<th class="sortable" data-idx="${idx}">${h}</th>`);
+      colParts.push(`<col style="width:${widths[idx]}px">`);
+    });
+    if (checkboxIdx === headers.length) {
+      headerCells.push('<th class="row-check-header">チェック</th>');
+      colParts.push(`<col class="short-check-col" style="width:${SHORT_CHECK_COL_WIDTH}px">`);
+    }
+    const rowsHtml = pageRows.map((row, rowOffset) => {
+      const rawKey = keyIdx >= 0 ? row[keyIdx] : `${pageStart + rowOffset}`;
+      const key = String(rawKey ?? '');
+      const checked = Boolean(isShort && checkSet?.has(key));
+      const cells = [];
+      headers.forEach((header, idx) => {
+        if (checkboxIdx === idx) {
+          cells.push(shortCheckboxCellHtml(key, checked));
+        }
+        cells.push(cellHtml(idx, header, row[idx], row, spec));
+      });
+      if (checkboxIdx === headers.length) {
+        cells.push(shortCheckboxCellHtml(key, checked));
+      }
+      const rowClass = checked ? ' class="row-checked"' : '';
+      return `<tr${rowClass} data-key="${escapeHtml(key)}">${cells.join('')}</tr>`;
+    }).join('');
     const targetWidth = Math.max(totalWidth, cont.clientWidth || 0);
-    cont.innerHTML = `<table style="min-width:100%; width:${targetWidth}px"><colgroup>${colgroup}</colgroup><thead><tr>${ths}</tr></thead><tbody>${rowsHtml}</tbody></table>`;
+    cont.innerHTML = `<table style="min-width:100%; width:${targetWidth}px"><colgroup>${colParts.join('')}</colgroup><thead><tr>${headerCells.join('')}</tr></thead><tbody>${rowsHtml}</tbody></table>`;
     const tableEl = qs('table', cont);
     setupColumnResizers(tableEl, widths, headers, spec);
-    qsa('th.sortable', cont).forEach(th => th.addEventListener('click', () => { const idx = Number(th.dataset.idx); const dir = state.sort.index === idx ? -state.sort.dir : 1; sortBy(idx, dir); renderTable(); }));
+    qsa('th.sortable', cont).forEach(th => th.addEventListener('click', () => {
+      const idx = Number(th.dataset.idx);
+      const dir = state.sort.index === idx ? -state.sort.dir : 1;
+      sortBy(idx, dir);
+      renderTable();
+    }));
     qs('#pageInfo').textContent = `${state.page} / ${Math.max(1, Math.ceil(state.filtered.length / state.pageSize))} (${state.filtered.length}件)`;
     cont.querySelectorAll('input.edit-cell')?.forEach(input => input.addEventListener('change', onEditChange));
+    if (isShort) {
+      cont.querySelectorAll('input.short-check').forEach(input => input.addEventListener('change', onShortCheckToggle));
+    }
+  }  function shortCheckboxCellHtml(key, checked) {
+    const flag = checked ? ' checked' : '';
+    return `<td class="row-check-cell"><input type="checkbox" class="short-check" data-key="${escapeHtml(key)}" aria-label="チェック" title="チェック"${flag}></td>`;
   }
 
-    function minWidthFor(header, idx, spec) {
+
+
+  function minWidthFor(header, idx, spec) {
     const h = String(header || '');
     if (!h) return DEFAULT_MIN_WIDTH;
     if (h.includes('自由') || h.includes('備考') || h.includes('メモ')) return 240;
@@ -363,9 +426,38 @@
   }
 
 function cellHtml(i, header, val, row, spec) {
-    const editTargets = { houchozan: '自由入力', text_items: '自由入力', short: '備考', reschedule: '自由入力' };
-    let canEdit = header === editTargets[state.tab];
-    if (state.tab === 'houchozan_today' && header === '自由入劁E') { canEdit = true; }
+    const normalizedHeader = String(header || '').trim();
+    const ds = state.datasets[state.tab] || {};
+    const dsHeaders = Array.isArray(ds.headers) ? ds.headers : [];
+    const rawHeader = String(dsHeaders[i] || '').trim();
+    const heuristics = `${normalizedHeader}|${rawHeader}`;
+    const includesOne = (tokens) => tokens.some(token => token && heuristics.includes(token));
+
+    let canEdit = false;
+    switch (state.tab) {
+      case 'short':
+        canEdit = includesOne(['自由', '備']);
+        break;
+      case 'houchozan':
+      case 'text_items':
+      case 'reschedule':
+        canEdit = includesOne(['自由']);
+        break;
+      case 'houchozan_today':
+        canEdit = includesOne(['自由']);
+        if (normalizedHeader.includes('自由')) canEdit = true;
+        break;
+      default:
+        canEdit = false;
+    }
+
+    if (state.tab === 'short' && !canEdit) {
+      const isLastColumn = i === row.length - 1;
+      if (isLastColumn) {
+        canEdit = true;
+      }
+    }
+
     if (canEdit) {
       const esc = (String(val || '')).replaceAll('&', '&amp;').replaceAll('<', '&lt;');
       return `<td><input class="edit-cell" type="text" value="${esc}" data-col="${header}" data-idx="${i}" /></td>`;
@@ -380,10 +472,40 @@ function cellHtml(i, header, val, row, spec) {
     const ds = state.datasets[state.tab];
     if (!ds) return;
     const keyIdx = (ds.letters || []).indexOf(ds.keyLetter || '');
-    const row = state.filtered[(state.page - 1) * state.pageSize + Array.from(input.closest('tr').parentNode.children).indexOf(input.closest('tr'))];
-    const key = keyIdx >= 0 ? String(row[keyIdx] || '') : '';
-    fetch('/api/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tab: state.tab, key, field: input.dataset.col, value: input.value || '' }) }).catch(()=>{});
+    const rowIndex = (state.page - 1) * state.pageSize + Array.from(input.closest('tr').parentNode.children).indexOf(input.closest('tr'));
+    const row = state.filtered[rowIndex];
+    const key = keyIdx >= 0 && row ? String(row[keyIdx] || '') : '';
+    const colIdx = Number(input.dataset.idx);
+    const value = input.value || '';
+    if (row && Number.isFinite(colIdx)) {
+      row[colIdx] = value;
+      if (Array.isArray(ds.rows)) {
+        const dsRowIndex = ds.rows.indexOf(row);
+        if (dsRowIndex >= 0) ds.rows[dsRowIndex][colIdx] = value;
+      }
+    }
+    fetch('/api/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tab: state.tab, key, field: input.dataset.col, value }) }).catch(()=>{});
   }
+  function onShortCheckToggle(e) {
+    const input = e.target;
+    if (!input || input.type !== 'checkbox') return;
+    const key = input.dataset.key || '';
+    if (!key) return;
+    const checked = Boolean(input.checked);
+    const set = ensureRowCheckSet('short');
+    if (checked) set.add(key); else set.delete(key);
+    const row = input.closest('tr');
+    if (row) row.classList.toggle('row-checked', checked);
+    if (state.datasets.short) {
+      state.datasets.short.checkedKeys = Array.from(set);
+    }
+    fetch('/api/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tab: 'short', key, field: '__checked__', value: checked })
+    }).catch(() => {});
+  }
+
 
   function sortBy(idx, dir) {
     state.sort = { index: idx, dir };
@@ -471,18 +593,23 @@ function cellHtml(i, header, val, row, spec) {
     const cols = qsa('col', tableEl);
     const ths = qsa('thead th', tableEl);
     ths.forEach((th, idx) => {
+      const dataIdx = Number(th.dataset.idx);
+      if (!Number.isFinite(dataIdx)) {
+        th.classList.add('no-resize');
+        return;
+      }
       th.classList.add('resizable');
       const handle = document.createElement('span');
       handle.className = 'col-resizer';
       th.appendChild(handle);
       let startX = 0;
-      let startWidth = widths[idx] || minWidthFor(headers[idx], idx, spec);
-      const min = () => minWidthFor(headers[idx], idx, spec);
+      let startWidth = widths[dataIdx] || minWidthFor(headers[dataIdx], dataIdx, spec);
+      const min = () => minWidthFor(headers[dataIdx], dataIdx, spec);
       const onMove = (ev) => {
         const delta = ev.clientX - startX;
         const nextWidth = clampWidth(Math.max(min(), startWidth + delta));
         if (cols[idx]) cols[idx].style.width = `${nextWidth}px`;
-        widths[idx] = nextWidth;
+        widths[dataIdx] = nextWidth;
         th.style.width = `${nextWidth}px`;
         qsa(`tbody td:nth-child(${idx + 1})`, tableEl).forEach(td => {
           td.style.width = `${nextWidth}px`;
@@ -499,7 +626,7 @@ function cellHtml(i, header, val, row, spec) {
       handle.addEventListener('mousedown', (ev) => {
         ev.preventDefault();
         startX = ev.clientX;
-        startWidth = widths[idx] || min();
+        startWidth = widths[dataIdx] || min();
         handle.classList.add('active');
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
@@ -508,12 +635,12 @@ function cellHtml(i, header, val, row, spec) {
         ev.preventDefault();
         ensureBaseWidths(tab, headers, spec);
         const base = state.baseWidths[tab] || [];
-        const baseWidth = base[idx] ?? min();
-        widths[idx] = clampWidth(Math.max(min(), baseWidth));
-        if (cols[idx]) cols[idx].style.width = `${widths[idx]}px`;
-        th.style.width = `${widths[idx]}px`;
+        const baseWidth = base[dataIdx] ?? min();
+        widths[dataIdx] = clampWidth(Math.max(min(), baseWidth));
+        if (cols[idx]) cols[idx].style.width = `${widths[dataIdx]}px`;
+        th.style.width = `${widths[dataIdx]}px`;
         qsa(`tbody td:nth-child(${idx + 1})`, tableEl).forEach(td => {
-          td.style.width = `${widths[idx]}px`;
+          td.style.width = `${widths[dataIdx]}px`;
         });
         updateTableWidth(tableEl, widths);
         state.columnWidths[tab] = widths.slice();
@@ -523,6 +650,7 @@ function cellHtml(i, header, val, row, spec) {
     updateTableWidth(tableEl, widths);
     state.columnWidths[tab] = widths.slice();
   }
+
 
   function autoFitActiveTab() {
     const tab = state.tab;
@@ -619,22 +747,5 @@ function cellHtml(i, header, val, row, spec) {
 
   // 上書き: 自由入力/備考カラムは判定をヘッダの語で行い、
   // houchozan_today でも編集可能にする
-  function cellHtml(i, header, val, row, spec) {
-    const h = String(header || '');
-    let editable = false;
-    if (state.tab === 'short') {
-      editable = h.includes('備');
-    } else if (state.tab === 'houchozan' || state.tab === 'houchozan_today' || state.tab === 'text_items' || state.tab === 'reschedule') {
-      editable = h.includes('自由');
-    }
-    if (editable) {
-      const esc = (String(val || '')).replaceAll('&', '&amp;').replaceAll('<', '&lt;');
-      return `<td><input class="edit-cell" type="text" value="${esc}" data-col="${header}" data-idx="${i}" /></td>`;
-    }
-    const display = formatCell(i, header, val, spec);
-    const title = String(val ?? '');
-    return `<td title="${escapeHtml(title)}">${display}</td>`;
-  }
-
-  document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('DOMContentLoaded', init);
 })();

@@ -144,6 +144,15 @@ tbody tr { transition: background-color .15s ease; }
 tbody tr:nth-child(even) { background: #fafafa; }
 tbody tr:hover { background: #eff6ff; }
 
+.row-check-header { width: 52px; text-align: center; padding: 0; }
+.row-check-cell { text-align: center; padding: 4px 6px; }
+.row-check-cell input { width: 16px; height: 16px; cursor: pointer; }
+.short-check-col { width: 52px !important; }
+tbody tr.row-checked,
+tbody tr.row-checked td { background: #fef9c3 !important; }
+tbody tr.row-checked:hover,
+tbody tr.row-checked:hover td { background: #fef08a !important; }
+
 input.edit-cell, textarea.edit-cell {
   width: 100%;
   background: #ffffff;

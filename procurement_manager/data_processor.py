@@ -17,7 +17,7 @@ from . import config
 logger = logging.getLogger(__name__)
 
 
-_CACHE_VERSION = 2
+_CACHE_VERSION = 4
 
 EXCLUDED_SUPPLIER_CODES = {"NVAA294825", "NVAA351706", "NVAA280167"}
 _SUPPLIER_CODE_LETTER = "B"
@@ -482,22 +482,42 @@ def load_user_inputs() -> Dict:
 
 
 
-def save_user_input(tab: str, key: str, field: str, value: str) -> None:
+def _to_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if not v:
+            return False
+        return v in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
+def save_user_input(tab: str, key: str, field: str, value: Any) -> None:
     data = load_user_inputs()
     tabmap = data.setdefault(tab, {})
     entry = tabmap.setdefault(key, {})
     # 追加されたフィールド名を正規化
     field_norm = _normalize_field_name(tab, field)
-    entry[field_norm] = value
+    if field_norm == "__checked__":
+        flag = _to_bool(value)
+        if flag:
+            entry[field_norm] = True
+        else:
+            if field_norm in entry:
+                entry.pop(field_norm, None)
+            if not entry:
+                tabmap.pop(key, None)
+    else:
+        entry[field_norm] = value
     tmp = config.USER_INPUTS_FILE.with_suffix('.tmp')
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
     tmp.replace(config.USER_INPUTS_FILE)
     invalidate_tab_cache(tab)
     if tab == 'houchozan':
         invalidate_tab_cache('houchozan_today')
-
-
-
 
 
 def _normalize_field_name(tab: str, field: str) -> str:
@@ -509,10 +529,13 @@ def _normalize_field_name(tab: str, field: str) -> str:
                 return "自由入力"
         return "自由入力" if f == "" else f
     if tab == "short":
-        if f != "備考":
-            if f and f.startswith("備"):
-                return "備考"
-        return "備考" if f == "" else f
+        if not f:
+            return "自由入力"
+        if "自由" in f:
+            return "自由入力"
+        if f.startswith("備") or "備" in f:
+            return "自由入力"
+        return f
     return f
 
 
@@ -520,7 +543,7 @@ def _normalize_user_inputs_inplace(data: Dict) -> bool:
     changed = False
     if not isinstance(data, dict):
         return False
-    for tab, canonical in (("houchozan", "自由入力"), ("text_items", "自由入力"), ("short", "備考")):
+    for tab, canonical in (("houchozan", "自由入力"), ("text_items", "自由入力"), ("short", "自由入力")):
         tabmap = data.get(tab)
         if not isinstance(tabmap, dict):
             continue
@@ -535,11 +558,21 @@ def _normalize_user_inputs_inplace(data: Dict) -> bool:
                     if k == canonical:
                         alt = None
                         break
-                    if (canonical.startswith("自由") and "自由" in k) or (canonical == "備考" and (k.startswith("備") or "備" in k)):
+                    if (canonical.startswith("自由") and "自由" in k) or (tab == "short" and (k.startswith("備") or "備" in k)):
                         alt = k
                         break
                 if alt is not None:
                     entry[canonical] = entry.pop(alt)
+                    changed = True
+            if tab == "short" and "__checked__" in entry:
+                if _to_bool(entry.get("__checked__")):
+                    if entry["__checked__"] is not True:
+                        entry["__checked__"] = True
+                        changed = True
+                else:
+                    entry.pop("__checked__", None)
+                    if not entry:
+                        tabmap.pop(key, None)
                     changed = True
     return changed
 
@@ -733,7 +766,7 @@ def build_text_items(df_if: pd.DataFrame, today: date) -> Tuple[List[str], List[
     return list(view_df.columns), letters, view_df.reset_index(drop=True), key_letter
 
 
-def build_short(df_short: pd.DataFrame, today: date) -> Tuple[List[str], List[str], pd.DataFrame, str]:
+def build_short(df_short: pd.DataFrame, today: date) -> Tuple[List[str], List[Optional[str]], pd.DataFrame, str, List[str]]:
     # A〜M列（13列）
     letters = [index_to_col_letter(i) for i in range(13)]
     if df_short.empty:
@@ -749,14 +782,21 @@ def build_short(df_short: pd.DataFrame, today: date) -> Tuple[List[str], List[st
     key_letter = "A"
     key_idx = 0
     inputs = load_user_inputs().get("short", {})
-    notes = []
+    notes: List[str] = []
+    checked_keys: List[str] = []
     for _, row in view_df.iterrows():
         key = str(row.iloc[key_idx]) if key_idx < len(row) else ""
-        notes.append(inputs.get(key, {}).get("備考", ""))
+        entry = inputs.get(key, {})
+        value = entry.get("自由入力")
+        if value is None:
+            value = entry.get("備考")
+        notes.append(value or "")
+        if _to_bool(entry.get("__checked__")):
+            checked_keys.append(key)
     view_df = view_df.copy()
-    view_df["備考"] = notes
+    view_df["自由入力"] = notes
     letters_ret = letters + [None]
-    return list(view_df.columns), letters_ret, view_df.reset_index(drop=True), key_letter
+    return list(view_df.columns), letters_ret, view_df.reset_index(drop=True), key_letter, checked_keys
 
 
 def load_tab_data(tab: str, use_sample: bool = True, ref_date: Optional[date] = None) -> Dict:
@@ -790,7 +830,7 @@ def load_tab_data(tab: str, use_sample: bool = True, ref_date: Optional[date] = 
             if cached:
                 return cached
             df = read_short(ps)
-            headers, letters, view_df, key_letter = build_short(df, ref_date)
+            headers, letters, view_df, key_letter, checked_keys = build_short(df, ref_date)
             src_dates = []
             for pp in ps:
                 dt = extract_date_from_filename(pp)
@@ -815,6 +855,7 @@ def load_tab_data(tab: str, use_sample: bool = True, ref_date: Optional[date] = 
             uniq = sorted({d.strftime("%Y/%m/%d") for d in src_dates})
             result["sourceDates"] = uniq
             result["nameLetter"] = "C" if "C" in letters else ("B" if "B" in letters else letters[0] if letters else "A")
+            result["checkedKeys"] = checked_keys
 
         _save_cached_payload(tab, mode, ref_date, sources_info, result)
         return result
