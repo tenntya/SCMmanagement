@@ -5,8 +5,14 @@ import logging
 from datetime import datetime, timedelta, date
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from contextlib import contextmanager
 import os
 import ctypes
+try:
+    import fcntl  # type: ignore
+except ImportError:
+    fcntl = None  # type: ignore[assignment]
+
 from ctypes import wintypes
 
 import pandas as pd
@@ -523,28 +529,88 @@ def build_reschedule(df_if130: pd.DataFrame, today: date) -> Tuple[List[str], Li
     return headers, letters, view_df.reset_index(drop=True), key_letter
 
 
-# ---------- 永続化（自由入力/備考） ----------
+# ---------- 永続化・自由入力備忘 ----------
 
-def _ensure_user_inputs_file():
-    if not config.USER_INPUTS_FILE.exists():
-        config.USER_INPUTS_FILE.write_text("{}", encoding="utf-8")
+def _user_inputs_lock_path() -> Path:
+    path = config.USER_INPUTS_FILE
+    return path.with_name(path.name + '.lock')
+
+
+if os.name == "nt":
+    import msvcrt  # type: ignore
+
+    _USER_INPUTS_LOCK_SIZE = 32
+
+    def _acquire_inputs_lock(handle) -> None:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, _USER_INPUTS_LOCK_SIZE)
+
+    def _release_inputs_lock(handle) -> None:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, _USER_INPUTS_LOCK_SIZE)
+else:
+    def _acquire_inputs_lock(handle) -> None:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+
+    def _release_inputs_lock(handle) -> None:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def _user_inputs_lock():
+    lock_path = _user_inputs_lock_path()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open('a+b') as fh:
+        _acquire_inputs_lock(fh)
+        try:
+            yield
+        finally:
+            _release_inputs_lock(fh)
+
+
+def _ensure_user_inputs_file() -> None:
+    path = config.USER_INPUTS_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = _user_inputs_lock_path()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if not lock_path.exists():
+        lock_path.touch()
+    if not path.exists():
+        path.write_text('{}', encoding='utf-8')
+
+
+def _read_user_inputs_unlocked() -> Dict:
+    try:
+        raw = config.USER_INPUTS_FILE.read_text(encoding='utf-8')
+    except FileNotFoundError:
+        return {}
+    if not raw.strip():
+        return {}
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except Exception as exc:
+        logger.exception('failed to parse user inputs: %s', exc)
+        return {}
+
+
+def _write_user_inputs_unlocked(data: Dict) -> None:
+    tmp = config.USER_INPUTS_FILE.with_suffix('.tmp')
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+    tmp.replace(config.USER_INPUTS_FILE)
 
 
 def load_user_inputs() -> Dict:
     _ensure_user_inputs_file()
-    try:
-        data = json.loads(config.USER_INPUTS_FILE.read_text(encoding="utf-8"))
-        changed = _normalize_user_inputs_inplace(data)
-        if changed:
-            tmp = config.USER_INPUTS_FILE.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-            tmp.replace(config.USER_INPUTS_FILE)
+    with _user_inputs_lock():
+        data = _read_user_inputs_unlocked()
+        if not isinstance(data, dict):
+            data = {}
+        if _normalize_user_inputs_inplace(data):
+            _write_user_inputs_unlocked(data)
         return data
-    except Exception as exc:
-        logger.exception("failed to load user inputs: %s", exc)
-        return {}
-
-
 
 
 def _to_bool(value: Any) -> bool:
@@ -556,34 +622,34 @@ def _to_bool(value: Any) -> bool:
         v = value.strip().lower()
         if not v:
             return False
-        return v in {"1", "true", "yes", "y", "on"}
+        return v in {'1', 'true', 'yes', 'y', 'on'}
     return bool(value)
 
 
 def save_user_input(tab: str, key: str, field: str, value: Any) -> None:
-    data = load_user_inputs()
-    tabmap = data.setdefault(tab, {})
-    entry = tabmap.setdefault(key, {})
-    # 追加されたフィールド名を正規化
-    field_norm = _normalize_field_name(tab, field)
-    if field_norm == "__checked__":
-        flag = _to_bool(value)
-        if flag:
-            entry[field_norm] = True
+    _ensure_user_inputs_file()
+    with _user_inputs_lock():
+        data = _read_user_inputs_unlocked()
+        if not isinstance(data, dict):
+            data = {}
+        tabmap = data.setdefault(tab, {})
+        entry = tabmap.setdefault(key, {})
+        field_norm = _normalize_field_name(tab, field)
+        if field_norm == '__checked__':
+            flag = _to_bool(value)
+            if flag:
+                entry[field_norm] = True
+            else:
+                if field_norm in entry:
+                    entry.pop(field_norm, None)
+                if not entry:
+                    tabmap.pop(key, None)
         else:
-            if field_norm in entry:
-                entry.pop(field_norm, None)
-            if not entry:
-                tabmap.pop(key, None)
-    else:
-        entry[field_norm] = value
-    tmp = config.USER_INPUTS_FILE.with_suffix('.tmp')
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-    tmp.replace(config.USER_INPUTS_FILE)
+            entry[field_norm] = value
+        _write_user_inputs_unlocked(data)
     invalidate_tab_cache(tab)
     if tab == 'houchozan':
         invalidate_tab_cache('houchozan_today')
-
 
 def _normalize_field_name(tab: str, field: str) -> str:
     f = (field or "").strip()
@@ -646,17 +712,15 @@ def _normalize_user_inputs_inplace(data: Dict) -> bool:
 
 def _load_all() -> Dict:
     _ensure_user_inputs_file()
-    try:
-        return json.loads(config.USER_INPUTS_FILE.read_text(encoding="utf-8"))
-    except Exception as exc:
-        logger.exception("failed to load user inputs cache: %s", exc)
-        return {}
+    with _user_inputs_lock():
+        data = _read_user_inputs_unlocked()
+        return data if isinstance(data, dict) else {}
 
 
 def _save_all(data: Dict) -> None:
-    tmp = config.USER_INPUTS_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(config.USER_INPUTS_FILE)
+    _ensure_user_inputs_file()
+    with _user_inputs_lock():
+        _write_user_inputs_unlocked(data)
 
 
 def get_houchozan_names() -> Dict[str, object]:

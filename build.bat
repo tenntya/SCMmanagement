@@ -19,6 +19,7 @@ pyinstaller --noconfirm --clean ^
   --onefile --name %NAME% ^
   --add-data "%TEMPLATES%;procurement_manager/templates" ^
   --add-data "%STATIC%;procurement_manager/static" ^
+  --noconsole ^
   %SRC%
 
 echo.
